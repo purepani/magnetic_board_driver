@@ -1,0 +1,191 @@
+use bitmatch::bitmatch;
+use core::fmt;
+use defmt::Format;
+use serde::{Deserialize, Serialize};
+
+use super::{
+    memory::{Gain, HallConf, Res3D, Resolution, TempOffset, TempRef, TemperatureCompensation},
+    MagneticBits,
+};
+
+#[derive(Clone, Copy, Format)]
+#[repr(usize)]
+pub enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+struct SensitivityPerBit {
+    value: f64,
+}
+
+//Taken from data sheet. Indices are [Gain][Resolution][Axis]
+const SENSITIVITY: [[[f64; 3]; 4]; 8] = [
+    [
+        [0.751, 0.751, 1.210],
+        [1.502, 1.502, 2.420],
+        [3.004, 3.004, 4.840],
+        [6.009, 6.009, 9.680],
+    ],
+    [
+        [0.601, 0.601, 0.968],
+        [1.202, 1.202, 1.936],
+        [2.403, 2.403, 3.872],
+        [4.840, 4.840, 7.744],
+    ],
+    [
+        [0.451, 0.451, 0.726],
+        [0.901, 0.901, 1.452],
+        [1.803, 1.803, 2.904],
+        [3.605, 3.605, 5.808],
+    ],
+    [
+        [0.376, 0.376, 0.605],
+        [0.751, 0.751, 1.210],
+        [1.502, 1.502, 2.420],
+        [3.004, 3.004, 4.840],
+    ],
+    [
+        [0.300, 0.300, 0.484],
+        [0.601, 0.601, 0.968],
+        [1.202, 1.202, 1.936],
+        [2.403, 2.403, 3.872],
+    ],
+    [
+        [0.250, 0.250, 0.403],
+        [0.501, 0.501, 0.807],
+        [1.001, 1.001, 1.613],
+        [2.003, 2.003, 3.227],
+    ],
+    [
+        [0.200, 0.200, 0.323],
+        [0.401, 0.401, 0.645],
+        [0.801, 0.801, 1.291],
+        [1.602, 1.602, 2.581],
+    ],
+    [
+        [0.150, 0.150, 0.242],
+        [0.300, 0.300, 0.484],
+        [0.601, 0.601, 0.968],
+        [1.202, 1.202, 1.936],
+    ],
+];
+
+impl SensitivityPerBit {
+    pub const fn new(axis: Axis, gain: Gain, resolution: Resolution, hallconf: HallConf) -> Self {
+        let hall_conf_multiplier = match hallconf {
+            HallConf::TWOPHASE => 98.0 / 75.0,
+            HallConf::FOURPHASE => 1.0,
+        };
+        Self {
+            value: hall_conf_multiplier
+                * SENSITIVITY[gain as usize][resolution as usize][axis as usize],
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug)]
+pub enum TempValue {
+    Celsius(f64),
+}
+impl TempValue {
+    fn from_bits(register: &[u8; 2], offset: TempOffset) -> Self {
+        let t = u16::from_be_bytes(*register) as f64;
+        let offset = u16::from_be_bytes(offset.offset) as f64;
+
+        Self::Celsius(35.0 + (t - offset) / 45.2)
+    }
+
+    fn from_option_bits(register: Option<&[u8; 2]>, offset: TempRef) -> Option<Self> {
+        let t = u16::from_be_bytes(*register?) as f64;
+        let offset = u16::from_be_bytes(offset.offset) as f64;
+
+        Some(Self::Celsius(35.0 + (t - offset) / 45.2))
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug)]
+pub struct MagneticField {
+    pub x: Option<MagneticValue>,
+    pub y: Option<MagneticValue>,
+    pub z: Option<MagneticValue>,
+    pub t: Option<TempValue>,
+}
+
+impl MagneticField {
+    pub fn from_bits(
+        x: Option<&[u8; 2]>,
+        y: Option<&[u8; 2]>,
+        z: Option<&[u8; 2]>,
+        temp: Option<&[u8; 2]>,
+        temp_offset: TempRef,
+        temp_comp: TemperatureCompensation,
+        gain: Gain,
+        resolution: Res3D,
+        hallconf: HallConf,
+    ) -> Option<Self> {
+        let x_field = MagneticValue::from_bits(x, temp_comp, gain, resolution.x, hallconf, Axis::X);
+        let y_field = MagneticValue::from_bits(y, temp_comp, gain, resolution.y, hallconf, Axis::Y);
+        let z_field = MagneticValue::from_bits(z, temp_comp, gain, resolution.z, hallconf, Axis::Z);
+        let temp = TempValue::from_option_bits(temp, temp_offset);
+        Some(Self {
+            x: x_field,
+            y: y_field,
+            z: z_field,
+            t: temp,
+        })
+    }
+
+    pub fn from_mbits(
+        mbits: MagneticBits,
+        temp_offset: TempRef,
+        temp_comp: TemperatureCompensation,
+        gain: Gain,
+        resolution: Res3D,
+        hallconf: HallConf,
+    ) -> Option<Self> {
+        Self::from_bits(
+            mbits.x.as_ref(),
+            mbits.y.as_ref(),
+            mbits.z.as_ref(),
+            mbits.temp.as_ref(),
+            temp_offset,
+            temp_comp,
+            gain,
+            resolution,
+            hallconf,
+        )
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug)]
+#[repr(usize)]
+pub enum MagneticValue {
+    uT(f64),
+}
+
+impl MagneticValue {
+    pub fn from_bits(
+        value: Option<&[u8; 2]>,
+        temp_comp: TemperatureCompensation,
+        gain: Gain,
+        resolution: Resolution,
+        hallconf: HallConf,
+        axis: Axis,
+    ) -> Option<Self> {
+        let flip_msb = match (temp_comp, resolution) {
+            (TemperatureCompensation::Disabled, Resolution::BIT19)
+            | (TemperatureCompensation::Disabled, Resolution::BIT18) => Some(1),
+            (TemperatureCompensation::Enabled, Resolution::BIT19 | Resolution::BIT18)
+            | (TemperatureCompensation::Disabled, Resolution::BIT17 | Resolution::BIT16) => {
+                Some(-1)
+            }
+            _ => None,
+        }?;
+        let value_to_i16 = i16::from_be_bytes(*value?) * flip_msb;
+        let sensitivity = SensitivityPerBit::new(axis, gain, resolution, hallconf);
+
+        Some(Self::uT(sensitivity.value * f64::from(value_to_i16)))
+    }
+}

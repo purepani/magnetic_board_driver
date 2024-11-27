@@ -4,24 +4,28 @@
     {
       nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable"; # or whatever vers
     };
-  
+
   outputs = { self, nixpkgs, ... }@inputs:
     let
-     system = "x86_64-linux"; # your version
-     pkgs = nixpkgs.legacyPackages.${system};    
+      system = "x86_64-linux"; # your version
+      pkgs = nixpkgs.legacyPackages.${system};
     in
     {
       devShells.${system}.default = pkgs.mkShell
-      {
-        packages = with pkgs; [ 
-			rustup
-			probe-rs
-		]; # whatever you need
-	
-	shellHook = ''
-		 export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
-		'';
+        {
+          packages = with pkgs; [
+            rustup
+            minicom
+            probe-rs
+            bacon
+            pkg-config
+            udev
+          ]; # whatever you need
 
-      };
+          shellHook = ''
+            		 export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+            		'';
+
+        };
     };
 }

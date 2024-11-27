@@ -1,0 +1,27 @@
+[package]
+edition = "2021"
+name = "data_transfer"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+defmt = "0.3"
+defmt-rtt = "0.4"
+
+bitvec = {version="1.0.1", default-features=false}
+bitflags = "2.6.0"
+bitmatch = "0.1.1"
+postcard = { version = "1.0.10", features = ["embedded-io"] }
+serde = { version = "1.0.215", default-features = false }
+embedded-io = "0.6.1"
+embedded-hal = "0.2.6"
+embedded-hal-async = {version="1.0.0", features=["defmt-03"]}
+crc = "3.2.1"
+
+
+[profile.release]
+debug = 2
+
+[features]
+use-std = ["serde/std","postcard/use-std", "alloc"]
+alloc = ["serde/alloc", "postcard/alloc"]

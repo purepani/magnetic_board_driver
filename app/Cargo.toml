@@ -1,0 +1,26 @@
+[package]
+edition = "2021"
+name = "app"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+defmt = "0.3"
+defmt-rtt = "0.4"
+
+postcard = { version = "1.0.10", features = ["embedded-io-06", "use-std"] }
+serde = { version = "1.0.215", default-features = false }
+data_transfer = {path="../data_transfer", features=["use-std"]}
+serialport = "4.6.0"
+embedded-io = { version = "0.6.1", features = ["std"] }
+ratatui = "0.29.0"
+crossterm = { version = "0.28.1", features = ["event-stream"] }
+tokio = { version = "1.41.1", features = ["full"] }
+tokio-util = "0.7.12"
+futures = "0.3.31"
+crc = "3.2.1"
+
+
+
+[profile.release]
+debug = 2
