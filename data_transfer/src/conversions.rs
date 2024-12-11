@@ -1,7 +1,10 @@
 use bitmatch::bitmatch;
 use defmt::Format;
 use embedded_io;
-use postcard::ser_flavors::{self, Cobs, Slice};
+use postcard::{
+    experimental::max_size::MaxSize,
+    ser_flavors::{self, Cobs, Slice},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::memory::{
@@ -103,7 +106,7 @@ impl SensitivityPerBit {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug, MaxSize)]
 pub enum TempValue {
     Celsius(f64),
 }
@@ -129,7 +132,7 @@ impl TempValue {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug, Default, MaxSize)]
 pub struct MagneticField {
     pub x: Option<MagneticValue>,
     pub y: Option<MagneticValue>,
@@ -190,7 +193,7 @@ pub enum Error {
     FailedWrite,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug, MaxSize)]
 #[repr(usize)]
 pub enum MagneticValue {
     uT(f64),

@@ -1,4 +1,6 @@
 use defmt::write;
+use heapless::Vec;
+use postcard::{accumulator::CobsAccumulator, experimental::max_size::MaxSize};
 use serde::{Deserialize, Serialize};
 
 use crate::conversions::MagneticField;
@@ -17,8 +19,10 @@ pub enum Error {
     FailedCOBSDeserialization,
     FailedWrite,
     FailedRead,
+    DeserializeUnexpectedEnd,
     FailedParse(PostcardError),
 }
+
 #[derive(Debug)]
 pub struct PostcardError(postcard::Error);
 
@@ -49,34 +53,41 @@ impl defmt::Format for PostcardError {
     }
 }
 
+pub fn take_from_slice<'a, T>(buf: &'a mut [u8]) -> (&'a mut [u8], Result<T, postcard::Error>)
+where
+    T: Deserialize<'a>,
+{
+    let Some(zero_pos) = buf.iter().position(|&b| b == 0) else {
+        return (buf, Err(postcard::Error::DeserializeUnexpectedEnd));
+    };
+
+    let (leading, trailing) = buf.split_at_mut(zero_pos + 1);
+
+    (trailing, postcard::from_bytes_cobs(leading))
+}
+
 impl From<postcard::Error> for Error {
     fn from(value: postcard::Error) -> Self {
         Self::FailedParse(PostcardError(value))
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, defmt::Format, MaxSize)]
 pub struct Message {
     pub field: MagneticField,
     pub position: (f32, f32, f32),
+    pub address: u8,
+    pub time: u64,
 }
 
 impl Message {
-    pub fn new(field: MagneticField, position: (f32, f32, f32)) -> Self {
-        Self { field, position }
-    }
-    pub fn write_to<T: embedded_io::Write>(&self, writer: &mut T) -> Result<(), Error> {
-        let mut cobs_buffer = [0; 64];
-        //let c = crc::Crc::<u32>::new(&crc::CRC_32_CKSUM);
-        //let crc_serialized = postcard::to_slice_crc32(self, &mut crc_buffer, digest)
-        //   .map_err(|_| Error::FailedCRCSerialization)?;
-        let cobs_serialized = postcard::to_slice_cobs(self, &mut cobs_buffer)
-            .map_err(|_| Error::FailedCOBSSerialization)?;
-        //let _ = postcard::to_eio(cobs_serialized, writer).map_err(|_| Error::FailedWrite)?;
-        writer
-            .write_all(cobs_serialized)
-            .map_err(|_| Error::FailedWrite)?;
-        Ok(())
+    pub fn new(field: MagneticField, position: (f32, f32, f32), address: u8, time: u64) -> Self {
+        Self {
+            field,
+            position,
+            address,
+            time,
+        }
     }
 
     #[cfg(feature = "use-std")]
@@ -89,5 +100,86 @@ impl Message {
 
         let cobs = postcard::take_from_bytes_cobs::<Message>(msg)?;
         Ok(cobs.0)
+    }
+
+    #[cfg(feature = "use-std")]
+    pub fn read_all<T: std::io::Read>(reader: &mut T) -> std::vec::Vec<Result<Self, Error>> {
+        let mut buffer = std::vec![];
+        let _ = reader.read_to_end(&mut buffer);
+        let slice = buffer.split_inclusive_mut(|val| *val == 0x00);
+
+        let values = slice
+            .map(|buf| {
+                let cobs = postcard::take_from_bytes_cobs::<Message>(buf)?;
+                Ok(cobs)
+            })
+            .filter(|cobs| cobs.as_ref().is_ok_and(|c| c.1.len() == 0))
+            .map(|x| x.map(|y| y.0))
+            .collect();
+
+        values
+    }
+
+    #[cfg(feature = "use-std")]
+    pub fn read_all_buf(buffer: &mut [u8]) -> (std::vec::Vec<Result<Self, Error>>, &mut [u8]) {
+        let mut values = std::vec![];
+        let mut window = buffer;
+        while !window.is_empty() {
+            let (remaining, val) = take_from_slice::<Message>(window);
+            window = remaining;
+            if let Err(postcard::Error::DeserializeUnexpectedEnd) = val {
+                break;
+            }
+            values.push(val.map_err(Error::from));
+        }
+        (values, window)
+    }
+}
+
+pub trait Writable {
+    async fn write_to<T: embedded_io_async::Write>(&self, writer: &mut T) -> Result<(), Error>;
+}
+
+impl Writable for Message {
+    async fn write_to<T: embedded_io_async::Write>(&self, writer: &mut T) -> Result<(), Error> {
+        //let mut cobs_buffer = heapless::Vec::<u8, { Message::POSTCARD_MAX_SIZE + 1 }>::new();
+        //let c = crc::Crc::<u32>::new(&crc::CRC_32_CKSUM);
+        //let crc_serialized = postcard::to_slice_crc32(self, &mut crc_buffer, digest)
+        //   .map_err(|_| Error::FailedCRCSerialization)?;
+        let cobs_serialized = postcard::to_vec_cobs::<_, { Message::POSTCARD_MAX_SIZE + 1 }>(self)
+            .map_err(|_| Error::FailedCOBSSerialization)?;
+        //let _ = postcard::to_eio(cobs_serialized, writer).map_err(|_| Error::FailedWrite)?;
+        writer
+            .write_all(&cobs_serialized)
+            .await
+            .map_err(|_| Error::FailedWrite)?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "use-std")]
+pub struct MessageReader {
+    buf: std::vec::Vec<u8>,
+}
+
+#[cfg(feature = "use-std")]
+impl MessageReader {
+    pub fn new() -> Self {
+        Self {
+            buf: std::vec::Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "use-std")]
+    pub fn read_all<T: std::io::Read>(
+        &mut self,
+        reader: &mut T,
+    ) -> std::vec::Vec<Result<Message, Error>> {
+        let mut buffer = std::vec![];
+        let _ = reader.read_to_end(&mut buffer);
+        self.buf.extend(buffer);
+        let (values, remaining) = Message::read_all_buf(&mut self.buf);
+        self.buf = remaining.to_vec();
+        return values;
     }
 }

@@ -1,4 +1,6 @@
 #![no_std]
+use core::borrow::Borrow;
+
 use super::commands::{Command, CommandData, RunCommand, RM};
 use crate::mlx90393::commands::MagneticFieldReturnFlags;
 use crate::mlx90393::states::Burst;
@@ -10,6 +12,7 @@ use crate::mlx90393::states::SingleMeasurement;
 use crate::mlx90393::states::WakeOnChange;
 use data_transfer::conversions::MagneticBits;
 use data_transfer::memory::{Register, TempRef};
+use embassy_stm32::exti::ExtiInput;
 
 use super::states::SensorState;
 use bitflags::bitflags;
@@ -23,6 +26,10 @@ use embassy_time::Timer;
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::i2c::I2c;
 //use heapless::Vec;
+
+const T_STBY_MICRO: u64 = 264;
+const T_ACTIVE_MICRO: u64 = 264;
+const T_CONV_END_MICRO: u64 = 264;
 
 bitflags! {
     struct StatusFlags: u8 {
@@ -77,10 +84,12 @@ pub struct MLXSettings {
     temperature_compensation: TemperatureCompensation,
     hall_configuration: HallConf,
     temp_ref: TempRef,
+    magnetic_conversion_time: u64,
+    temperature_conversion_time: u64,
 }
 
-impl<I: I2c, P: Wait> MLX90393<I, P> {
-    pub fn new(address: u8, interrupt: P, i2c: I) -> Self {
+impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
+    pub fn new(address: u8, interrupt: Option<P>, i2c: I) -> Self {
         Self {
             address,
             interrupt,
@@ -166,6 +175,8 @@ impl<I: I2c, P: Wait> MLX90393<I, P> {
 
         let data_bits = &self.read_register::<0x02>().await;
         let resolution = data_bits.resolution();
+        let magnetic_conversion_time = data_bits.magnetic_axis_conversion_time_micro();
+        let temperature_conversion_time = data_bits.temperature_conversion_time_micro();
         Timer::after_millis(150).await;
 
         let data_bits = &self.read_register::<0x01>().await;
@@ -181,6 +192,8 @@ impl<I: I2c, P: Wait> MLX90393<I, P> {
             hall_configuration,
             temperature_compensation,
             temp_ref,
+            magnetic_conversion_time,
+            temperature_conversion_time,
         })
     }
 
@@ -216,7 +229,21 @@ impl<I: I2c, P: Wait> MLX90393<I, P> {
         &mut self,
     ) -> (Status, MagneticBits) {
         //info!("Waiting for interrupt.");
-        let _ = self.interrupt.wait_for_high().await;
+        if let Some(interrupt) = &mut self.interrupt {
+            let _ = interrupt.wait_for_high().await;
+            let _ = Timer::after_micros(140).await;
+        } else {
+            if let Some(state) = self.state {
+                let magnetic_axis_count =
+                    u64::try_from([X, Y, Z].into_iter().filter(|x| *x).count()).unwrap();
+                let conversion_time = T_STBY_MICRO
+                    + T_ACTIVE_MICRO
+                    + magnetic_axis_count * state.magnetic_conversion_time
+                    + state.temperature_conversion_time
+                    + T_CONV_END_MICRO;
+                let _ = Timer::after_micros(conversion_time).await;
+            }
+        }
         //info!("Received Interrupt");
         let (status, mbits) = {
             match (X, Y, Z, TEMP) {
@@ -426,122 +453,8 @@ impl<I: I2c, P: Wait> MLX90393<I, P> {
     }
 
     pub async fn has_measured(&mut self) {
-        let _ = self.interrupt.wait_for_high().await;
-    }
-}
-
-pub struct Sensor<S, T, I, P> {
-    state: SensorState<S, T>,
-    internal: MLX90393<I, P>,
-}
-
-impl<S, T, I: I2c, P: Wait> Sensor<S, T, I, P> {
-    pub async fn reset(mut self) -> Sensor<Idle, NoMode, I, P> {
-        self.internal.reset().await;
-        Sensor {
-            state: SensorState {
-                state: Idle,
-                mode: NoMode,
-            },
-            internal: self.internal,
-        }
-    }
-}
-
-impl<I: I2c, P: Wait> Sensor<Idle, NoMode, I, P> {
-    pub async fn new(address: u8, interrupt: P, i2c: I) -> Sensor<Idle, NoMode, I, P> {
-        let sensor = Sensor {
-            state: SensorState {
-                state: Idle,
-                mode: NoMode,
-            },
-            internal: MLX90393::new(address, interrupt, i2c),
-        };
-        sensor.reset().await
-    }
-}
-
-impl<I: I2c, P: Wait> Sensor<Idle, NoMode, I, P> {
-    pub async fn single_measurement<
-        const X: bool,
-        const Y: bool,
-        const Z: bool,
-        const TEMP: bool,
-    >(
-        mut self,
-    ) -> Sensor<Measuring, SingleMeasurement, I, P> {
-        self.internal
-            .set_single_measurmenet::<X, Y, Z, TEMP>()
-            .await;
-        Sensor {
-            state: self.state.into(),
-            internal: self.internal,
-        }
-    }
-
-    pub async fn burst<const X: bool, const Y: bool, const Z: bool, const TEMP: bool>(
-        mut self,
-    ) -> Sensor<Measuring, Burst, I, P> {
-        self.internal.set_burst::<X, Y, Z, TEMP>().await;
-        Sensor {
-            state: self.state.into(),
-            internal: self.internal,
-        }
-    }
-
-    pub async fn wake_on_change<const X: bool, const Y: bool, const Z: bool, const TEMP: bool>(
-        mut self,
-    ) -> Sensor<Measuring, WakeOnChange, I, P> {
-        self.internal.set_woc::<X, Y, Z, TEMP>().await;
-        Sensor {
-            state: self.state.into(),
-            internal: self.internal,
-        }
-    }
-}
-
-impl<T, I: I2c, P: Wait> Sensor<Measuring, T, I, P> {
-    pub async fn has_measured(mut self) -> Sensor<Measured, T, I, P> {
-        self.internal.has_measured().await;
-        Sensor {
-            state: self.state.into(),
-            internal: self.internal,
-        }
-    }
-}
-
-impl<I: I2c, P: Wait> Sensor<Measured, Burst, I, P> {
-    pub async fn has_measured(self) -> Sensor<Measuring, Burst, I, P> {
-        Sensor {
-            state: self.state.into(),
-            internal: self.internal,
-        }
-    }
-}
-
-impl<I: I2c, P: Wait> Sensor<Measured, WakeOnChange, I, P> {
-    pub async fn has_measured(self) -> Sensor<Measuring, WakeOnChange, I, P> {
-        Sensor {
-            state: self.state.into(),
-            internal: self.internal,
-        }
-    }
-}
-
-impl<I: I2c, P: Wait> Sensor<Measured, SingleMeasurement, I, P> {
-    pub async fn has_measured(self) -> Sensor<Idle, NoMode, I, P> {
-        Sensor {
-            state: self.state.into(),
-            internal: self.internal,
-        }
-    }
-}
-
-impl<T, I: I2c, P: Wait> Sensor<Measured, T, I, P> {
-    pub async fn exit(self) -> Sensor<Idle, NoMode, I, P> {
-        Sensor {
-            state: self.state.into(),
-            internal: self.internal,
+        if let Some(interrupt) = &mut self.interrupt {
+            let _ = interrupt.wait_for_high().await;
         }
     }
 }

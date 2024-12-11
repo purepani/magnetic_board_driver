@@ -84,6 +84,17 @@ impl Register<0x02> {
     pub fn resolution(&self) -> Res3D {
         Res3D::from_u8_slice(&self.data)
     }
+
+    pub fn magnetic_axis_conversion_time_micro(&self) -> u64 {
+        let osr = self.data[0] & 0b0000_0011;
+        let dig_filt = (self.data[0] & 0b0001_1100) >> 2;
+        67 + 64 * (1 << osr) * (2 + (1 << dig_filt))
+    }
+
+    pub fn temperature_conversion_time_micro(&self) -> u64 {
+        let osr2 = (self.data[1] & 0b0001_1000) >> 3;
+        67 + 192 * (1 << osr2)
+    }
 }
 
 impl Register<0x03> {
@@ -283,6 +294,7 @@ impl Res3D {
         }
     }
 }
+
 #[repr(u32)]
 pub enum CustomerMemoryArea {
     Hallconf,

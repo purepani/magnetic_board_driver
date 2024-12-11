@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     io::{self, Write},
     thread::sleep,
     time::Duration,
@@ -6,25 +7,56 @@ use std::{
 
 use crossterm::{
     cursor,
-    event::{self, Event},
+    event::{self, Event, KeyCode},
     execute, queue,
     style::{self, Stylize},
     terminal,
 };
 use data_transfer::conversions::{MagneticField, MagneticValue, TempValue};
 use postcard::from_bytes;
-use ratatui::{text::Text, widgets::Row, Frame};
+use ratatui::{
+    text::Text,
+    widgets::{Paragraph, Row},
+    Frame,
+};
 use serialport::SerialPort;
+mod sensor_monitor;
+use sensor_monitor::MagneticData;
+use tokio::sync::watch::{self, Receiver};
 
+use crate::sensor_monitor::SensorWatcher;
+
+#[derive(Debug, Default, PartialEq)]
+enum RunningState {
+    #[default]
+    Running,
+    Done,
+}
+
+#[derive(Debug, Default)]
 struct Model {
-    pub fields: MagneticField,
+    pub data: BTreeMap<u8, MagneticData>,
+    pub state: RunningState,
+}
+
+impl Model {
+    pub fn new() -> Self {
+        Model::default()
+    }
+
+    pub fn modify_from_message(&mut self, message: BTreeMap<u8, MagneticData>) -> &mut Self {
+        self.data = message;
+        self
+    }
 }
 
 enum Message {
-    RecievedField(MagneticField),
+    RecievedField(BTreeMap<u8, MagneticData>),
+    Quit,
 }
 
-fn main() -> io::Result<()> {
+#[tokio::main]
+async fn main() -> color_eyre::Result<()> {
     //let mut terminal = ratatui::init();
     //loop {
     //terminal.draw(draw).expect("failed to draw frame");
@@ -33,48 +65,41 @@ fn main() -> io::Result<()> {
     //}
     //}
     //ratatui::restore();
-    let mut stdout = std::io::stdout();
-    let p = serialport::available_ports().expect("Serial Port not found");
-    let baud_rate = 115200;
-    let port_builder = serialport::new(p.first().unwrap().port_name.clone(), baud_rate);
-    let mut port = port_builder.open().unwrap();
-    let _ = port.write(&[1; 8]);
+    //let mut stdout = std::io::stdout();
     //let mut buffer = [0; 100000];
-    execute!(stdout, terminal::Clear(terminal::ClearType::All))?;
-    loop {
-        let val = data_transfer::messaging::Message::read(&mut port).map(|msg| msg);
-        match val {
-            Ok(msg) => {
-                let (bx, by, bz, temp) = (
-                    msg.field.x.unwrap_or(MagneticValue::uT(0.0)),
-                    msg.field.y.unwrap_or(MagneticValue::uT(0.0)),
-                    msg.field.z.unwrap_or(MagneticValue::uT(0.0)),
-                    msg.field.t.unwrap_or(TempValue::Celsius(0.0)),
-                );
-                let (x, y, z) = msg.position;
-                let val = format!(
-                    "x: {:.2}\ty: {:.2}\tz: {:.2}\nBx: {:.3}\tBy: {:.3}\tBz: {:.3}\tTemp: {:.3}\n",
-                    x,
-                    y,
-                    z,
-                    bx.value(),
-                    by.value(),
-                    bz.value(),
-                    temp.value()
-                );
-                queue!(
-                    stdout,
-                    cursor::MoveToPreviousLine(2),
-                    style::PrintStyledContent(val.magenta())
-                )?;
+    //
+    //
+    let data = BTreeMap::<u8, MagneticData>::new();
+    let (tx, mut rx) = watch::channel(data);
+    let watch_sensors = tokio::spawn(async move {
+        let mut watcher = SensorWatcher::new();
+        loop {
+            let vals = watcher.update();
+            for (address, val) in vals.await {
+                tx.send_if_modified(|all_data| {
+                    all_data.insert(address, val);
+                    true
+                });
             }
-            Err(val) => {
-                println!("{:#?}", val);
-            }
-        };
-        port.clear(serialport::ClearBuffer::Input);
-        sleep(Duration::new(0, 100000000));
+        }
+    });
+
+    let mut model = Model::new();
+    let mut terminal = tui::init_terminal()?;
+    //execute!(stdout, terminal::Clear(terminal::ClearType::All))?;
+    while model.state != RunningState::Done {
+        let _ = terminal.draw(|f| view(&mut model, f));
+        //sleep(Duration::new(0, 100000000));
+        //let val = data_transfer::messaging::Message::read(&mut port);
+        //let mut current_msg = val.ok().map(|msg| Message::RecievedField(msg));
+        let mut current_msg = handle_event(&model, &mut rx)?;
+        while current_msg.is_some() {
+            current_msg = update(&mut model, current_msg.unwrap());
+        }
     }
+    watch_sensors.abort();
+    tui::restore_terminal()?;
+    Ok(())
 }
 
 fn draw(frame: &mut Frame) {
@@ -85,37 +110,98 @@ fn draw(frame: &mut Frame) {
     frame.render_widget(table, frame.area());
 }
 
-fn test() {
-    let p = serialport::available_ports().expect("Serial Port not found");
-    let baud_rate = 115200;
-    let port_builder = serialport::new(p.first().unwrap().port_name.clone(), baud_rate);
-    let mut port = port_builder.open().unwrap();
-    let _ = port.write(&[1; 8]);
-    let mut buffer = [0; 100000];
-    let val = postcard::from_io::<MagneticField, _>((port, &mut buffer));
-    match val {
-        Ok((field, _)) => print!("{:#?}", field),
-        Err(val) => print!("{:#?}", val),
-    };
-}
-
-fn update(model: &Model, msg: Message) -> Model {
+fn update(model: &mut Model, msg: Message) -> Option<Message> {
     match msg {
-        Message::RecievedField(field) => Model { fields: field },
+        Message::RecievedField(field) => {
+            model.modify_from_message(field);
+            None
+        }
+        Message::Quit => {
+            model.state = RunningState::Done;
+            None
+        }
     }
 }
 
-fn view(model: &Model, frame: &mut Frame) {
-    let field = model.fields;
-    let [x, y, z] = [field.x, field.y, field.z].map(|field| {
-        field.map_or("0".to_string(), |val| match val {
-            data_transfer::conversions::MagneticValue::uT(x) => x.to_string(),
+fn handle_event(
+    model: &Model,
+    rx: &mut Receiver<BTreeMap<u8, MagneticData>>,
+) -> color_eyre::Result<Option<Message>> {
+    if event::poll(Duration::from_millis(50))? {
+        if let Event::Key(key) = event::read()? {
+            if key.kind == event::KeyEventKind::Press {
+                return Ok(handle_key(key));
+            }
+        }
+    }
+    if rx.has_changed()? {
+        let val = rx.borrow_and_update();
+        return Ok(Some(Message::RecievedField(val.clone())));
+    }
+
+    Ok(None)
+}
+fn handle_key(key: event::KeyEvent) -> Option<Message> {
+    match key.code {
+        KeyCode::Char('q') => Some(Message::Quit),
+        _ => None,
+    }
+}
+
+fn view(model: &mut Model, frame: &mut Frame) {
+    let fields = model.data.iter();
+    //Row::new(vec!["X", "Y", "Z", "TEMP"]),
+    let rows = fields
+        .map(|(address, data)| {
+            let [x, y, z] = [data.field.x, data.field.y, data.field.z].map(|field| {
+                field.map_or("0".to_string(), |val| match val {
+                    data_transfer::conversions::MagneticValue::uT(x) => format!("{:.3}", x),
+                })
+            });
+            Row::new(vec![address.to_string(), x, y, z, data.time.to_string()])
         })
-    });
-    let rows = [
-        Row::new(vec!["X", "Y", "Z", "TEMP"]),
-        Row::new(vec![x, y, z]),
-    ];
-    let table = ratatui::widgets::Table::new(rows, [15, 15, 15, 15]);
-    frame.render_widget(table, frame.area())
+        .collect::<Vec<_>>();
+    let table = ratatui::widgets::Table::new(rows, [15, 15, 15, 15, 15]);
+    //frame.render_widget(Paragraph::new(format!("Magnetic fields")), frame.area());
+    //frame.render_widget(
+    //Paragraph::new(format!("Magnetic fields empty: {}", model.data.is_empty())),
+    //frame.area(),
+    //);
+    frame.render_widget(table, frame.area());
+}
+
+mod tui {
+    use ratatui::{
+        backend::{Backend, CrosstermBackend},
+        crossterm::{
+            terminal::{
+                disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+            },
+            ExecutableCommand,
+        },
+        Terminal,
+    };
+    use std::{io::stdout, panic};
+
+    pub fn init_terminal() -> color_eyre::Result<Terminal<impl Backend>> {
+        enable_raw_mode()?;
+        stdout().execute(EnterAlternateScreen)?;
+        let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+        Ok(terminal)
+    }
+
+    pub fn restore_terminal() -> color_eyre::Result<()> {
+        stdout().execute(LeaveAlternateScreen)?;
+        disable_raw_mode()?;
+        Ok(())
+    }
+
+    pub fn install_panic_hook() {
+        let original_hook = panic::take_hook();
+        panic::set_hook(Box::new(move |panic_info| {
+            stdout().execute(LeaveAlternateScreen).unwrap();
+            disable_raw_mode().unwrap();
+            original_hook(panic_info);
+        }));
+    }
 }
