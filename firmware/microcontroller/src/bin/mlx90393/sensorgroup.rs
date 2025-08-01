@@ -73,8 +73,8 @@ impl<I: I2c, P: Wait> Sensor<I, Option<P>> {
     }
 }
 
-impl<'a, I: I2c, T: Pin> Sensor<I, Option<ExtiInput<'a, T>>> {
-    pub async fn new_stm(
+impl<'a, I: I2c> Sensor<I, Option<ExtiInput<'a>>> {
+    pub async fn new_stm<T: Pin>(
         address: u8,
         position: (f32, f32, f32),
         pin_ch: Option<(
@@ -84,8 +84,7 @@ impl<'a, I: I2c, T: Pin> Sensor<I, Option<ExtiInput<'a, T>>> {
         i2c: I,
     ) -> Self {
         let interr = if let Some((pin, ch)) = pin_ch {
-            let pin = Input::new(pin, Pull::Down);
-            Some(ExtiInput::new(pin, ch))
+            Some(ExtiInput::new(pin, ch, Pull::Down))
         } else {
             None
         };
@@ -141,7 +140,7 @@ where
             pin_ch: Some((pin, ch)),
         }
     }
-    pub async fn with_i2c<I: I2c>(self, i2c: I) -> Sensor<I, Option<ExtiInput<'a, P>>> {
+    pub async fn with_i2c<I: I2c>(self, i2c: I) -> Sensor<I, Option<ExtiInput<'a>>> {
         Sensor::new_stm(self.address, self.position, self.pin_ch, i2c).await
     }
 }
