@@ -12,6 +12,7 @@ use embassy_sync::{
     mutex::Mutex,
 };
 use embedded_io::Write;
+use futures::{future, join};
 use heapless::{self, String, Vec};
 use postcard;
 
@@ -23,10 +24,18 @@ use embassy_stm32::{
     flash::Async,
     gpio::{self, AnyPin, Input, Level, Output, Pin, Pull, Speed},
     i2c, interrupt,
-    peripherals::{self, GPDMA1, GPDMA1_CH0, GPDMA1_CH1, GPDMA1_CH2, GPDMA1_CH3, I2C1, USART1},
+    peripherals::{
+        self, GPDMA1, GPDMA1_CH0, GPDMA1_CH1, GPDMA1_CH2, GPDMA1_CH3, I2C1, PA8, PB12, USART1,
+    },
     time::hz,
 };
-use embassy_time::Timer;
+use embassy_stm32::{
+    rcc::{mux, AHB5Prescaler, AHBPrescaler, APBPrescaler, Sysclk, VoltageScale},
+    time::khz,
+};
+
+use embassy_stm32::rcc::{PllDiv, PllMul, PllPreDiv, PllSource};
+use embassy_time::{Duration, Timer};
 use embedded_hal_async::digital::Wait;
 
 use embassy_stm32::usart;
@@ -76,30 +85,153 @@ where
     }
 }
 
-#[embassy_executor::task]
-async fn send_sensor() {
-    static I2C_BUS: StaticCell<Mutex<NoopRawMutex, i2c::I2c<'_, embassy_stm32::mode::Async>>> =
-        StaticCell::new();
+struct SensorParams {
+    address: u8,
+    position: (f32, f32, f32),
+}
+
+#[embassy_executor::task(pool_size = 16)]
+async fn send_sensor2(
+    sensor_params: [SensorParams; 16],
+    uart_bus: &'static Mutex<NoopRawMutex, usart::Uart<'static, embassy_stm32::mode::Async>>,
+    i2c_bus: &'static Mutex<
+        NoopRawMutex,
+        i2c::I2c<'static, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>,
+    >,
+) {
+    let [s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15] =
+        sensor_params.map(|sensor_param| async move {
+            let sensor_address = sensor_param.address;
+            let sensor_position = sensor_param.position;
+            let sensor_builder = SensorBuilder::new_stm(sensor_address, sensor_position);
+            let i2c_device = I2cDevice::new(&i2c_bus);
+            let mut sensor = sensor_builder.with_i2c(i2c_device).await;
+            let mut uart = WritableDevice::new(&uart_bus);
+            return (sensor, uart);
+        });
+    let (
+        mut s0,
+        mut s1,
+        mut s2,
+        mut s3,
+        mut s4,
+        mut s5,
+        mut s6,
+        mut s7,
+        mut s8,
+        mut s9,
+        mut s10,
+        mut s11,
+        mut s12,
+        mut s13,
+        mut s14,
+        mut s15,
+    ) = join!(s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15);
+
+    loop {
+        //let val = sensor.send_message(&mut uart).await;
+
+        let v0 = s0.0.get_message();
+        let v1 = s1.0.get_message();
+        let v2 = s2.0.get_message();
+        let v3 = s3.0.get_message();
+        let v4 = s4.0.get_message();
+        let v5 = s5.0.get_message();
+        let v6 = s6.0.get_message();
+        let v7 = s7.0.get_message();
+        let v8 = s8.0.get_message();
+        let v9 = s9.0.get_message();
+        let v10 = s10.0.get_message();
+        let v11 = s11.0.get_message();
+        let v12 = s12.0.get_message();
+        let v13 = s13.0.get_message();
+        let v14 = s14.0.get_message();
+        let v15 = s15.0.get_message();
+        let values = join!(v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15);
+        for val in [
+            values.0, values.1, values.2, values.3, values.4, values.5, values.6, values.7,
+            values.8, values.9, values.10, values.11, values.12, values.13, values.14, values.15,
+        ] {
+            if let Ok(v) = val {
+                debug!("{:#?}: {:#?}", v.address, v.field);
+            }
+        }
+    }
+}
+
+#[embassy_executor::main]
+async fn main(spawner: Spawner) {
+    info!("Hello World!");
+    static I2C_BUS: StaticCell<
+        Mutex<NoopRawMutex, i2c::I2c<'_, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>>,
+    > = StaticCell::new();
     static UART_BUS: StaticCell<Mutex<NoopRawMutex, usart::Uart<embassy_stm32::mode::Async>>> =
         StaticCell::new();
-    let p = embassy_stm32::init(Default::default());
-    let uart_rx = p.PA8;
-    let uart_tx = p.PB12;
+
+    static UART_INTERFACE: StaticCell<usart::Uart<'_, embassy_stm32::mode::Async>> =
+        StaticCell::new();
+    let mut config = embassy_stm32::Config::default();
+
+    // Fine-tune PLL1 dividers/multipliers
+
+    config.rcc.pll1 = Some(embassy_stm32::rcc::Pll {
+        source: PllSource::HSI,
+
+        prediv: PllPreDiv::DIV1, // PLLM = 1 → HSI / 1 = 16 MHz
+
+        mul: PllMul::MUL30, // PLLN = 30 → 16 MHz * 30 = 480 MHz VCO
+
+        divr: Some(PllDiv::DIV5), // PLLR = 5 → 96 MHz (Sysclk)
+
+        // divq: Some(PllDiv::DIV10), // PLLQ = 10 → 48 MHz (NOT USED)
+        divq: None,
+
+        divp: Some(PllDiv::DIV30), // PLLP = 30 → 16 MHz (USBOTG)
+
+        frac: Some(0), // Fractional part (enabled)
+    });
+
+    config.rcc.ahb_pre = AHBPrescaler::DIV1;
+
+    config.rcc.apb1_pre = APBPrescaler::DIV1;
+
+    config.rcc.apb2_pre = APBPrescaler::DIV1;
+
+    config.rcc.apb7_pre = APBPrescaler::DIV1;
+
+    config.rcc.ahb5_pre = AHB5Prescaler::DIV4;
+
+    // voltage scale for max performance
+
+    config.rcc.voltage_scale = VoltageScale::RANGE1;
+
+    // route PLL1_P into the USB‐OTG‐HS block
+
+    config.rcc.sys = Sysclk::PLL1_R;
+    let p = embassy_stm32::init(config);
+
+    info!("Hello World!");
+    let UART_RX = p.PA8;
+    let UART_TX = p.PB12;
+
     let uart_interface = usart::Uart::new(
         p.USART1,
-        uart_rx,
-        uart_tx,
+        UART_RX,
+        UART_TX,
         Irqs,
         p.GPDMA1_CH2,
         p.GPDMA1_CH3,
         usart::Config::default(),
     )
     .unwrap();
-    let uart_bus = Mutex::new(uart_interface);
-    let uart_bus = UART_BUS.init(uart_bus);
+    let uart_bus_mutex = Mutex::new(uart_interface);
+    let uart_bus = UART_BUS.init(uart_bus_mutex);
     let sda = p.PB1;
     let scl = p.PB2;
 
+    let mut i2c_config = i2c::Config::default();
+    i2c_config.timeout = Duration::from_millis(500);
+    i2c_config.frequency = khz(400);
     let i2cport = i2c::I2c::new(
         p.I2C1,
         scl,
@@ -107,256 +239,79 @@ async fn send_sensor() {
         Irqs,
         p.GPDMA1_CH0,
         p.GPDMA1_CH1,
-        hz(400000),
-        Default::default(),
+        i2c_config,
     );
 
     Timer::after_millis(100).await;
     let i2c_bus = Mutex::new(i2cport);
     let i2c_bus = I2C_BUS.init(i2c_bus);
-    let mut uart1 = WritableDevice::new(&uart_bus);
-    let mut uart2 = WritableDevice::new(&uart_bus);
-    let mut uart3 = WritableDevice::new(&uart_bus);
-    let mut uart4 = WritableDevice::new(&uart_bus);
-    let mut uart5 = WritableDevice::new(&uart_bus);
-    let mut uart6 = WritableDevice::new(&uart_bus);
-    let mut uart7 = WritableDevice::new(&uart_bus);
-    let mut uart8 = WritableDevice::new(&uart_bus);
-    let mut uart9 = WritableDevice::new(&uart_bus);
-    let mut uart10 = WritableDevice::new(&uart_bus);
-    let mut uart11 = WritableDevice::new(&uart_bus);
-    let mut uart12 = WritableDevice::new(&uart_bus);
-    let mut uart13 = WritableDevice::new(&uart_bus);
-    let mut uart14 = WritableDevice::new(&uart_bus);
-    let mut uart15 = WritableDevice::new(&uart_bus);
-    let mut uart16 = WritableDevice::new(&uart_bus);
 
-    let sensors = (
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x0C, (6.75, -6.75, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x0D, (6.75, -2.25, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x0E, (6.75, 2.25, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x0F, (6.75, 6.75, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x10, (2.25, -6.75, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x11, (2.25, -2.25, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x12, (2.25, 2.25, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x13, (2.25, 6.75, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x14, (-2.75, -6.75, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x15, (-2.75, -2.25, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x16, (-2.75, 2.25, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x17, (-2.75, 6.75, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x18, (-6.75, -6.75, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x19, (-6.75, -2.25, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x1A, (-6.75, 2.25, 0.0)),
-        SensorBuilder::<gpio::AnyPin, exti::AnyChannel>::new_stm(0x1B, (-6.75, 6.75, 0.0)),
-    );
-    let mut sensors = (
-        sensors.0.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.1.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.2.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.3.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.4.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.5.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.6.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.7.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.8.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.9.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.10.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.11.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.12.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.13.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.14.with_i2c(I2cDevice::new(&i2c_bus)).await,
-        sensors.15.with_i2c(I2cDevice::new(&i2c_bus)).await,
-    );
+    let sensor_params = [
+        SensorParams {
+            address: 0x0C,
+            position: (6.75, -6.75, 0.0),
+        },
+        SensorParams {
+            address: 0x0D,
+            position: (6.75, -2.75, 0.0),
+        },
+        SensorParams {
+            address: 0x0E,
+            position: (6.75, 2.75, 0.0),
+        },
+        SensorParams {
+            address: 0x0F,
+            position: (6.75, 6.75, 0.0),
+        },
+        SensorParams {
+            address: 0x10,
+            position: (2.75, -6.75, 0.0),
+        },
+        SensorParams {
+            address: 0x11,
+            position: (2.75, -2.75, 0.0),
+        },
+        SensorParams {
+            address: 0x12,
+            position: (2.75, 2.75, 0.0),
+        },
+        SensorParams {
+            address: 0x13,
+            position: (2.75, 6.75, 0.0),
+        },
+        SensorParams {
+            address: 0x14,
+            position: (-2.75, -6.75, 0.0),
+        },
+        SensorParams {
+            address: 0x15,
+            position: (-2.75, -2.75, 0.0),
+        },
+        SensorParams {
+            address: 0x16,
+            position: (-2.75, 2.75, 0.0),
+        },
+        SensorParams {
+            address: 0x17,
+            position: (-2.75, 6.75, 0.0),
+        },
+        SensorParams {
+            address: 0x18,
+            position: (-6.75, -6.75, 0.0),
+        },
+        SensorParams {
+            address: 0x19,
+            position: (-6.75, -2.75, 0.0),
+        },
+        SensorParams {
+            address: 0x20,
+            position: (-6.75, 2.75, 0.0),
+        },
+        SensorParams {
+            address: 0x21,
+            position: (-6.75, 6.75, 0.0),
+        },
+    ];
 
-    //let mut sensor = sensor_builder.with_i2c(i2cport).await;
-    loop {
-        let val1 = sensors.0.send_message(&mut uart1);
-        let val2 = sensors.1.send_message(&mut uart2);
-        let val3 = sensors.2.send_message(&mut uart3);
-        let val4 = sensors.3.send_message(&mut uart4);
-        let val5 = sensors.4.send_message(&mut uart5);
-        let val6 = sensors.5.send_message(&mut uart6);
-        let val7 = sensors.6.send_message(&mut uart7);
-        let val8 = sensors.7.send_message(&mut uart8);
-        let val9 = sensors.8.send_message(&mut uart9);
-        let val10 = sensors.9.send_message(&mut uart10);
-        let val11 = sensors.10.send_message(&mut uart11);
-        let val12 = sensors.11.send_message(&mut uart12);
-        let val13 = sensors.12.send_message(&mut uart13);
-        let val14 = sensors.13.send_message(&mut uart14);
-        let val15 = sensors.14.send_message(&mut uart15);
-        let val16 = sensors.15.send_message(&mut uart16);
-        let (
-            val1,
-            val2,
-            val3,
-            val4,
-            val5,
-            val6,
-            val7,
-            val8,
-            val9,
-            val10,
-            val11,
-            val12,
-            val13,
-            val14,
-            val15,
-            val16,
-        ) = futures::join!(
-            val1, val2, val3, val4, val5, val6, val7, val8, val9, val10, val11, val12, val13,
-            val14, val15, val16
-        );
-        debug!("{:#?}", val1);
-        debug!("{:#?}", val2);
-        debug!("{:#?}", val3);
-        debug!("{:#?}", val4);
-        debug!("{:#?}", val5);
-        debug!("{:#?}", val6);
-        debug!("{:#?}", val7);
-        debug!("{:#?}", val8);
-        debug!("{:#?}", val9);
-        debug!("{:#?}", val10);
-        debug!("{:#?}", val11);
-        debug!("{:#?}", val12);
-        debug!("{:#?}", val13);
-        debug!("{:#?}", val14);
-        debug!("{:#?}", val15);
-        debug!("{:#?}", val16);
-        Timer::after_micros(100).await;
-    }
-}
-
-#[embassy_executor::main]
-async fn main(spawner: Spawner) {
-    //let address_write: u8 = 0b0001110;
-    //let address_read: u8 = 0b0001111;
-    info!("Hello World!");
-
-    //static I2C_BUS: StaticCell<Mutex<CriticalSectionRawMutex, i2c::I2c<'_, I2C1, GPDMA1_CH0, GPDMA1_CH1>>> =
-    ////   StaticCell::new();
-
-    //static UART_BUS: StaticCell<Mutex<CriticalSectionRawMutex, usart::Uart<USART1, GPDMA1_CH2, GPDMA1_CH3>>> =
-    //StaticCell::new();
-
-    //info!("set up i2c");
-    //let i2c = i2c::I2c::new(
-    //p.I2C1,
-    //scl,
-    //sda,
-    //Irqs,
-    //p.GPDMA1_CH0,
-    //p.GPDMA1_CH1,
-    //hz(400000),
-    //Default::default(),
-    //);
-    //let i2c_bus: Mutex<CriticalSectionRawMutex, i2c::I2c<'_, I2C1, GPDMA1_CH0, GPDMA1_CH1>> = Mutex::new(i2c);
-    //let i2c_bus = I2C_BUS.init(i2c_bus);
-
-    //let address: u8 = 0x12;
-    //let pin = Input::new(p.PA10, Pull::Down);
-    //let interr = ExtiInput::new(pin, p.EXTI10);
-
-    //let mut led = Output::new(p.PB4, Level::High, Speed::Low);
-    //let mut red = Output::new(p.PB7, Level::High, Speed::Low);
-
-    //let uart_bus = Mutex::new(uart_interface);
-    //let uart_bus = UART_BUS.init(uart_bus);
-    //let uart1 = WritableDevice::new(&uart_bus);
-    //let uart2 = WritableDevice::new(&uart_bus);
-
-    //let i2c1 = I2cDevice::new(&i2c_bus);
-    //let i2c2 = I2cDevice::new(&i2c_bus);
-    //let i2c3 = I2cDevice::new(&i2c_bus);
-    //let i2c4 = I2cDevice::new(&i2c_bus);
-
-    //let sensor1 = SensorBuilder::new_stm_degraded(0x0C, (6.75, -6.75, 0.0), p.PB0, p.EXTI0);
-    //let sensor2 = SensorBuilder::new_stm_degraded(0x0D, (6.75, -2.25, 0.0), p.PB14, p.EXTI14);
-    let _ = spawner.spawn(send_sensor());
-    //let y = spawner.spawn(send_sensor(sensor2, uart_bus, i2c_bus));
-    //match y {
-    //Ok(_) => {}
-    //Err(err) => {
-    //info!("Failed sensor2: {}", err)
-    //}
-    //}
-    //    (0x0E, (6.75, 2.25, 0.0), p.PB13, p.EXTI13);
-    //   (0x0F, (6.75, 6.75, 0.0), p.PA10, p.EXTI10);
-    //(0x10, (2.25, -6.75, 0.0), p.PB4, p.EXTI4);
-    //(0x11, (2.25, -2.25, 0.0), p.PB3, p.EXTI10);
-    //(0x12, (2.25, 2.25, 0.0), p.PA10, p.EXTI10);
-    //(0x13, (2.25, 6.75, 0.0), p.PA10, p.EXTI10);
-    //(0x14, (-2.25, -6.75, 0.0), p.PA12, p.EXTI12);
-    //(0x15, (-2.25, -2.25, 0.0), p.PB5, p.EXTI5);
-    //(0x16, (-2.25, 2.25, 0.0), p.PA10, p.EXTI10);
-    //(0x17, (-2.25, 6.75, 0.0), p.PA10, p.EXTI10);
-    //(0x18, (-6.75, -6.75, 0.0), p.PA9, p.EXTI9);
-    //(0x19, (-6.75, -2.25, 0.0), p.PA2, p.EXTI2);
-    //(0x1A, (-6.75, 2.25, 0.0), p.PA10, p.EXTI10);
-    //(0x1B, (-6.75, 6.75, 0.0), p.PA10, p.EXTI10);
-
-    //let mut sensor = Sensor::new_stm(0x12, (0.0, 0.0, 0.0), p.PA10, p.EXTI10, i2c).await;
-
-    //loop {
-    //let val1 = sensor1.send_message(&mut uart_interface);
-    //let val2 = sensor2.send_message(&mut uart_interface);
-    //futures::join!(val1, val2);
-    //debug!("{:#?}", val1);
-    //debug!("{:#?}", val2);
-    //}
-
-    //let mut sens = MLX90393::new(address, interr, i2c);
-    //Timer::after_millis(100).await;
-    //sens.reset().await;
-    //Timer::after_millis(100).await;
-    //sens.set_measurement_configuration().await;
-    //match sens.state {
-    //None => info!("No sensor state able to be read."),
-    //Some(_) => info!("Set Sensor State"),
-    //}
-    //Timer::after_millis(200).await;
-    //sens.set_burst::<true, true, true, true>().await;
-    //Timer::after_millis(200).await;
-
-    //sens.read_register(mlx90393::CustomerMemoryArea::WOzThreshold)
-    //   .await;
-    //loop {
-    //let mut buffer = [0; 1];
-    //let _command = uart_interface.blocking_read(&mut buffer);
-    //sens.set_single_measurmenet::<true, true, true, true>()
-    //.await;
-    //let (status, field) = sens.get_field::<true, true, true, true>().await;
-
-    //match field {
-    //Some(x) => info!("{:#?}", x),
-    //None => info!("No field found"),
-    //}
-    //let message = field.map(|f| data_transfer::messaging::Message::new(f));
-
-    //if let Some(msg) = message {
-    //let _ = postcard::to_eio(&b, &mut uart_interface);
-    // let res = msg.write_to(&mut uart_interface);
-    //if let Err(err) = res {
-    //info!("{:#?}", err)
-    //}
-    //}
-    //Timer::after_millis(100).await;
-
-    //usart.blocking_write(&buffer);
-    //info!("Sent uart!");
-    //match field {
-    //   Some(x) => info!("{:?}", x),
-    //  None => info!("No field measured"),
-    //};
-    //}
-
-    //loop {
-    //   info!("high");
-    //   red.set_high();
-    //  Timer::after_millis(100).await;
-    //
-    //       info!("low");
-    //      red.set_low();
-    //     Timer::after_millis(100).await;
-    //}
+    let _ = spawner.spawn(send_sensor2(sensor_params, uart_bus, i2c_bus));
 }

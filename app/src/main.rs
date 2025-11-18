@@ -127,7 +127,7 @@ fn handle_event(
     model: &Model,
     rx: &mut Receiver<BTreeMap<u8, MagneticData>>,
 ) -> color_eyre::Result<Option<Message>> {
-    if event::poll(Duration::from_millis(50))? {
+    if event::poll(Duration::from_millis(5))? {
         if let Event::Key(key) = event::read()? {
             if key.kind == event::KeyEventKind::Press {
                 return Ok(handle_key(key));

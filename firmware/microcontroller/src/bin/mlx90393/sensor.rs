@@ -88,7 +88,10 @@ pub struct MLXSettings {
     temperature_conversion_time: u64,
 }
 
-impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
+impl<I: I2c, P: Wait> MLX90393<I, Option<P>>
+where
+    <I as embedded_hal_async::i2c::ErrorType>::Error: Format,
+{
     pub fn new(address: u8, interrupt: Option<P>, i2c: I) -> Self {
         Self {
             address,
@@ -101,17 +104,24 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
     pub async fn run_command<C, T, const M: usize, const N: usize>(
         &mut self,
         command: C,
-    ) -> (Status, [u8; N])
+    ) -> (Option<Status>, [u8; N])
     where
         C: RunCommand<T, M, N>,
     {
         let commands = command.write_command();
         let mut buffer = command.read_buffer();
-        let _ = self
+        let res = self
             .i2c
             .write_read(self.address, &commands, &mut buffer)
             .await;
-        let status = Status::from_u8(&buffer[0]);
+        match res {
+            Ok(_) => {}
+            Err(ref err) => {
+                debug!("Error: {:#?}", err);
+            }
+        }
+        let status = res.map(|_| Status::from_u8(&buffer[0])).ok();
+        //debug!("{:#?}", status);
 
         (status, buffer)
     }
@@ -131,7 +141,7 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
 
         let _ = self.i2c.read(self.address, &mut buffer).await;
         let status = Status::from_u8(&buffer[0]);
-        debug!("Status: {:#?}", &status);
+        //debug!("Status: {:#?}", &status);
 
         (status, buffer)
     }
@@ -139,14 +149,14 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
     pub async fn reset(&mut self) {
         let exit = Command::exit();
         let (_status, _) = self.run_command(exit).await;
-        Timer::after_micros(1000).await;
+        Timer::after_micros(1500).await;
         let reset = Command::reset();
         let (_status, _) = self.run_command(reset).await;
-        Timer::after_micros(1500).await;
+        Timer::after_micros(2000).await;
     }
 
     pub async fn set_sm<const X: bool, const Y: bool, const Z: bool, const TEMP: bool>(&mut self) {
-        info!("Settings Mode to Single Measurement.");
+        //info!("Settings Mode to Single Measurement.");
         let _ = self
             .run_command(Command::single_measurement::<X, Y, Z, TEMP>())
             .await;
@@ -162,26 +172,26 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
 
     pub async fn set_measurement_configuration(&mut self) -> &mut Self {
         self.state = self.get_measurement_configuration().await;
-        debug!("State: {}", self.state);
+        //debug!("State: {}", self.state);
         self
     }
 
     pub async fn get_measurement_configuration(&mut self) -> Option<MLXSettings> {
-        Timer::after_millis(150).await;
+        Timer::after_millis(20).await;
         let data_bits = &self.read_register::<0x00>().await;
         let gain = data_bits.gain();
         let hall_configuration = data_bits.hall_conf()?;
-        Timer::after_millis(150).await;
+        Timer::after_millis(20).await;
 
         let data_bits = &self.read_register::<0x02>().await;
         let resolution = data_bits.resolution();
         let magnetic_conversion_time = data_bits.magnetic_axis_conversion_time_micro();
         let temperature_conversion_time = data_bits.temperature_conversion_time_micro();
-        Timer::after_millis(150).await;
+        Timer::after_millis(20).await;
 
         let data_bits = &self.read_register::<0x01>().await;
         let temperature_compensation = data_bits.temperature_compensation();
-        Timer::after_millis(150).await;
+        Timer::after_millis(20).await;
 
         let data_bits = &self.read_register::<0x24>().await;
         let temp_ref = data_bits.temperature_reference();
@@ -227,7 +237,7 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
 
     pub async fn get_measurement<const X: bool, const Y: bool, const Z: bool, const TEMP: bool>(
         &mut self,
-    ) -> (Status, MagneticBits) {
+    ) -> (Option<Status>, MagneticBits) {
         //info!("Waiting for interrupt.");
         if let Some(interrupt) = &mut self.interrupt {
             let _ = interrupt.wait_for_high().await;
@@ -432,11 +442,10 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
 
     pub async fn get_field<const X: bool, const Y: bool, const Z: bool, const TEMP: bool>(
         &mut self,
-    ) -> (Status, Option<MagneticField>) {
+    ) -> (Option<Status>, Option<MagneticField>) {
         let state = self.state;
         let (status, mbits) = self.get_measurement::<X, Y, Z, TEMP>().await;
         //info!("{:#?}", status);
-
         (
             status,
             state.and_then(|state| {

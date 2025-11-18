@@ -8,7 +8,7 @@ rustflags = [
 ]
 
 [build]
-target = "thumbv8m.main-none-eabihf"
+target = "thumbv8m.main-none-eabi"
 
 [env]
-DEFMT_LOG = "trace"
+DEFMT_LOG = "debug"

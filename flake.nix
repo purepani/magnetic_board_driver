@@ -16,7 +16,7 @@
           packages = with pkgs; [
             rustup
             minicom
-            probe-rs
+            probe-rs-tools
             bacon
             pkg-config
             udev
