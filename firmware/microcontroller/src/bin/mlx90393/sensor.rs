@@ -1,23 +1,12 @@
 #![no_std]
-use core::borrow::Borrow;
 
-use super::commands::{Command, CommandData, RunCommand, RM};
-use crate::mlx90393::commands::MagneticFieldReturnFlags;
-use crate::mlx90393::states::Burst;
-use crate::mlx90393::states::Idle;
-use crate::mlx90393::states::Measured;
-use crate::mlx90393::states::Measuring;
-use crate::mlx90393::states::NoMode;
-use crate::mlx90393::states::SingleMeasurement;
-use crate::mlx90393::states::WakeOnChange;
+use super::commands::{Command, RunCommand};
 use data_transfer::conversions::MagneticBits;
 use data_transfer::memory::{Register, TempRef};
-use embassy_stm32::exti::ExtiInput;
 
-use super::states::SensorState;
 use bitflags::bitflags;
 use data_transfer::conversions::MagneticField;
-use data_transfer::memory::{Gain, HallConf, Res3D, TempOffset, TemperatureCompensation};
+use data_transfer::memory::{Gain, HallConf, Res3D, TemperatureCompensation};
 //use bitvec::prelude::*;
 use defmt::{debug, info, Format};
 //use embassy_stm32::i2c::Error;
@@ -242,17 +231,15 @@ where
         if let Some(interrupt) = &mut self.interrupt {
             let _ = interrupt.wait_for_high().await;
             let _ = Timer::after_micros(140).await;
-        } else {
-            if let Some(state) = self.state {
-                let magnetic_axis_count =
-                    u64::try_from([X, Y, Z].into_iter().filter(|x| *x).count()).unwrap();
-                let conversion_time = T_STBY_MICRO
-                    + T_ACTIVE_MICRO
-                    + magnetic_axis_count * state.magnetic_conversion_time
-                    + state.temperature_conversion_time
-                    + T_CONV_END_MICRO;
-                let _ = Timer::after_micros(conversion_time).await;
-            }
+        } else if let Some(state) = self.state {
+            let magnetic_axis_count =
+                u64::try_from([X, Y, Z].into_iter().filter(|x| *x).count()).unwrap();
+            let conversion_time = T_STBY_MICRO
+                + T_ACTIVE_MICRO
+                + magnetic_axis_count * state.magnetic_conversion_time
+                + state.temperature_conversion_time
+                + T_CONV_END_MICRO;
+            let _ = Timer::after_micros(conversion_time).await;
         }
         //info!("Received Interrupt");
         let (status, mbits) = {

@@ -1,6 +1,4 @@
-use embedded_hal_async::i2c::I2c;
 
-use crate::mlx90393::commands::CommandData;
 
 //enum Event {
 //Command(CommandData),

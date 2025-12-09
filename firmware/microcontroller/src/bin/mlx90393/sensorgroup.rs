@@ -3,16 +3,11 @@ use data_transfer::{
     messaging::{self, Writable},
 };
 use defmt::Format;
-use embassy_stm32::{
-    exti::{AnyChannel, Channel, ExtiInput},
-    gpio::{AnyPin, Input, Pin, Pull},
-    PeripheralType, Peripherals,
-};
+use embassy_stm32::exti::ExtiInput;
 use embassy_time::{Instant, Timer};
 use embedded_hal_async::{digital::Wait, i2c::I2c};
 use embedded_io::Write;
 
-use crate::mlx90393::Status;
 
 use super::sensor::MLX90393;
 

@@ -2,48 +2,38 @@
 #![no_main]
 mod mlx90393;
 
-use core::cell::RefCell;
 
-use data_transfer::conversions::MagneticField;
 
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_sync::{
-    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, RawMutex},
+    blocking_mutex::raw::{NoopRawMutex, RawMutex},
     mutex::Mutex,
 };
 use embedded_io::Write;
-use futures::{future, join};
-use heapless::{self, String, Vec};
-use postcard;
+use futures::join;
+use heapless::{self};
 
-use defmt::{debug, info, Formatter};
+use defmt::{debug, info};
 use embassy_executor::Spawner;
 use embassy_stm32::{
     bind_interrupts,
-    exti::{self, AnyChannel, ExtiInput},
-    flash::Async,
-    gpio::{self, AnyPin, Input, Level, Output, Pin, Pull, Speed},
-    i2c, interrupt,
+    i2c,
     peripherals::{
-        self, GPDMA1, GPDMA1_CH0, GPDMA1_CH1, GPDMA1_CH2, GPDMA1_CH3, I2C1, PA8, PB12, USART1,
+        self,
     },
-    time::hz,
 };
 use embassy_stm32::{
-    rcc::{mux, AHB5Prescaler, AHBPrescaler, APBPrescaler, Sysclk, VoltageScale},
+    rcc::{AHB5Prescaler, AHBPrescaler, APBPrescaler, Sysclk, VoltageScale},
     time::khz,
 };
 
 use embassy_stm32::rcc::{PllDiv, PllMul, PllPreDiv, PllSource};
 use embassy_time::{Duration, Timer};
-use embedded_hal_async::digital::Wait;
 
 use embassy_stm32::usart;
-use embedded_hal_async::i2c::{I2c, Operation};
-use embedded_hal_bus::{i2c::RefCellDevice, util::AtomicCell};
-use mlx90393::sensorgroup::{Sensor, SensorBuilder};
+use embedded_hal_async::i2c::I2c;
+use mlx90393::sensorgroup::SensorBuilder;
 
-use mlx90393::MLX90393;
 use static_cell::StaticCell;
 //use embedded_hal::blocking::i2c::Operation;
 use {defmt_rtt as _, panic_probe as _};
@@ -104,10 +94,10 @@ async fn send_sensor2(
             let sensor_address = sensor_param.address;
             let sensor_position = sensor_param.position;
             let sensor_builder = SensorBuilder::new_stm(sensor_address, sensor_position);
-            let i2c_device = I2cDevice::new(&i2c_bus);
-            let mut sensor = sensor_builder.with_i2c(i2c_device).await;
-            let mut uart = WritableDevice::new(&uart_bus);
-            return (sensor, uart);
+            let i2c_device = I2cDevice::new(i2c_bus);
+            let sensor = sensor_builder.with_i2c(i2c_device).await;
+            let uart = WritableDevice::new(uart_bus);
+            (sensor, uart)
         });
     let (
         mut s0,
