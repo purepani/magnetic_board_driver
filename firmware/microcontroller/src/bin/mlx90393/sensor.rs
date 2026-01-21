@@ -11,6 +11,7 @@ use data_transfer::memory::{Gain, HallConf, Res3D, TemperatureCompensation};
 use defmt::{debug, info, Format};
 //use embassy_stm32::i2c::Error;
 use embassy_time::Timer;
+use embedded_hal::i2c::Operation;
 //use embedded_hal::digital::v2::InputPin;
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::i2c::I2c;
@@ -77,10 +78,7 @@ pub struct MLXSettings {
     temperature_conversion_time: u64,
 }
 
-impl<I: I2c, P: Wait> MLX90393<I, Option<P>>
-where
-    <I as embedded_hal_async::i2c::ErrorType>::Error: Format,
-{
+impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
     pub fn new(address: u8, interrupt: Option<P>, i2c: I) -> Self {
         Self {
             address,
@@ -93,23 +91,22 @@ where
     pub async fn run_command<C, T, const M: usize, const N: usize>(
         &mut self,
         command: C,
-    ) -> (Option<Status>, [u8; N])
+    ) -> (Status, [u8; N])
     where
         C: RunCommand<T, M, N>,
     {
         let commands = command.write_command();
         let mut buffer = command.read_buffer();
-        let res = self
+
+        //let mut operations = [Operation::Write(&commands), Operation::Read(&mut buffer)];
+
+        //let transaction = self.i2c.transaction(self.address, &mut operations).await;
+
+        let transaction = self
             .i2c
             .write_read(self.address, &commands, &mut buffer)
             .await;
-        match res {
-            Ok(_) => {}
-            Err(ref err) => {
-                debug!("Error: {:#?}", err);
-            }
-        }
-        let status = res.map(|_| Status::from_u8(&buffer[0])).ok();
+        let status = Status::from_u8(&buffer[0]);
         //debug!("{:#?}", status);
 
         (status, buffer)
@@ -226,7 +223,7 @@ where
 
     pub async fn get_measurement<const X: bool, const Y: bool, const Z: bool, const TEMP: bool>(
         &mut self,
-    ) -> (Option<Status>, MagneticBits) {
+    ) -> (Status, MagneticBits) {
         //info!("Waiting for interrupt.");
         if let Some(interrupt) = &mut self.interrupt {
             let _ = interrupt.wait_for_high().await;
@@ -429,23 +426,22 @@ where
 
     pub async fn get_field<const X: bool, const Y: bool, const Z: bool, const TEMP: bool>(
         &mut self,
-    ) -> (Option<Status>, Option<MagneticField>) {
+    ) -> (Status, Option<MagneticField>) {
         let state = self.state;
         let (status, mbits) = self.get_measurement::<X, Y, Z, TEMP>().await;
         //info!("{:#?}", status);
-        (
-            status,
-            state.and_then(|state| {
-                MagneticField::from_mbits(
-                    mbits,
-                    state.temp_ref,
-                    state.temperature_compensation,
-                    state.gain,
-                    state.resolution,
-                    state.hall_configuration,
-                )
-            }),
-        )
+        let field = state.and_then(|state| {
+            MagneticField::from_mbits(
+                mbits,
+                state.temp_ref,
+                state.temperature_compensation,
+                state.gain,
+                state.resolution,
+                state.hall_configuration,
+            )
+        });
+        let field = if !status.error { field } else { None };
+        (status, field)
     }
 
     pub async fn has_measured(&mut self) {

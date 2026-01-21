@@ -2,12 +2,13 @@
 #![no_main]
 mod mlx90393;
 
-
-
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
+use embassy_futures::join::join_array;
 use embassy_sync::{
-    blocking_mutex::raw::{NoopRawMutex, RawMutex},
+    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, RawMutex, ThreadModeRawMutex},
     mutex::Mutex,
+    signal::Signal,
+    watch::Watch,
 };
 use embedded_io::Write;
 use futures::join;
@@ -16,11 +17,8 @@ use heapless::{self};
 use defmt::{debug, info};
 use embassy_executor::Spawner;
 use embassy_stm32::{
-    bind_interrupts,
-    i2c,
-    peripherals::{
-        self,
-    },
+    bind_interrupts, i2c,
+    peripherals::{self},
 };
 use embassy_stm32::{
     rcc::{AHB5Prescaler, AHBPrescaler, APBPrescaler, Sysclk, VoltageScale},
@@ -34,7 +32,9 @@ use embassy_stm32::usart;
 use embedded_hal_async::i2c::I2c;
 use mlx90393::sensorgroup::SensorBuilder;
 
+use crate::mlx90393::sensor;
 use static_cell::StaticCell;
+
 //use embedded_hal::blocking::i2c::Operation;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -80,70 +80,62 @@ struct SensorParams {
     position: (f32, f32, f32),
 }
 
-#[embassy_executor::task(pool_size = 16)]
-async fn send_sensor2(
-    sensor_params: [SensorParams; 16],
-    uart_bus: &'static Mutex<NoopRawMutex, usart::Uart<'static, embassy_stm32::mode::Async>>,
+async fn init_sensor(
+    sensor_param: SensorParams,
     i2c_bus: &'static Mutex<
-        NoopRawMutex,
+        CriticalSectionRawMutex,
         i2c::I2c<'static, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>,
     >,
+) -> mlx90393::sensorgroup::Sensor<
+    I2cDevice<
+        'static,
+        CriticalSectionRawMutex,
+        i2c::I2c<'static, embassy_stm32::mode::Async, i2c::Master>,
+    >,
+    Option<embassy_stm32::exti::ExtiInput<'static>>,
+> {
+    let sensor_address = sensor_param.address;
+    let sensor_position = sensor_param.position;
+    let sensor_builder = SensorBuilder::new_stm(sensor_address, sensor_position);
+    let i2c_device = I2cDevice::new(i2c_bus);
+    let mut sensor = sensor_builder.with_i2c(i2c_device).await;
+    sensor.set_burst_mode().await;
+    sensor
+}
+
+#[embassy_executor::task(pool_size = 16)]
+async fn send_sensor2(
+    mut sensor: mlx90393::sensorgroup::Sensor<
+        I2cDevice<
+            'static,
+            CriticalSectionRawMutex,
+            i2c::I2c<'static, embassy_stm32::mode::Async, i2c::Master>,
+        >,
+        Option<embassy_stm32::exti::ExtiInput<'static>>,
+    >,
+    uart_bus: &'static Mutex<
+        CriticalSectionRawMutex,
+        usart::Uart<'static, embassy_stm32::mode::Async>,
+    >,
+    mut rv: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, (), 16>,
 ) {
-    let [s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15] =
-        sensor_params.map(|sensor_param| async move {
-            let sensor_address = sensor_param.address;
-            let sensor_position = sensor_param.position;
-            let sensor_builder = SensorBuilder::new_stm(sensor_address, sensor_position);
-            let i2c_device = I2cDevice::new(i2c_bus);
-            let sensor = sensor_builder.with_i2c(i2c_device).await;
-            let uart = WritableDevice::new(uart_bus);
-            (sensor, uart)
-        });
-    let (
-        mut s0,
-        mut s1,
-        mut s2,
-        mut s3,
-        mut s4,
-        mut s5,
-        mut s6,
-        mut s7,
-        mut s8,
-        mut s9,
-        mut s10,
-        mut s11,
-        mut s12,
-        mut s13,
-        mut s14,
-        mut s15,
-    ) = join!(s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15);
+    let _ = rv.changed().await;
+    //let [s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15] =
+    let mut uart = {
+        let uart = WritableDevice::new(uart_bus);
+        uart
+    };
 
     loop {
-        //let val = sensor.send_message(&mut uart).await;
+        let val = sensor.send_message(&mut uart).await;
+        //let val = sensor.get_message().await;
 
-        let v0 = s0.0.get_message();
-        let v1 = s1.0.get_message();
-        let v2 = s2.0.get_message();
-        let v3 = s3.0.get_message();
-        let v4 = s4.0.get_message();
-        let v5 = s5.0.get_message();
-        let v6 = s6.0.get_message();
-        let v7 = s7.0.get_message();
-        let v8 = s8.0.get_message();
-        let v9 = s9.0.get_message();
-        let v10 = s10.0.get_message();
-        let v11 = s11.0.get_message();
-        let v12 = s12.0.get_message();
-        let v13 = s13.0.get_message();
-        let v14 = s14.0.get_message();
-        let v15 = s15.0.get_message();
-        let values = join!(v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15);
-        for val in [
-            values.0, values.1, values.2, values.3, values.4, values.5, values.6, values.7,
-            values.8, values.9, values.10, values.11, values.12, values.13, values.14, values.15,
-        ] {
-            if let Ok(v) = val {
-                debug!("{:#?}: {:#?}", v.address, v.field);
+        match val {
+            Ok(v) => {
+                debug!("{:#02x}: {:#?}", v.address, v.field);
+            }
+            Err(v) => {
+                //debug!("{:#?}", v);
             }
         }
     }
@@ -153,13 +145,18 @@ async fn send_sensor2(
 async fn main(spawner: Spawner) {
     info!("Hello World!");
     static I2C_BUS: StaticCell<
-        Mutex<NoopRawMutex, i2c::I2c<'_, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>>,
+        Mutex<
+            CriticalSectionRawMutex,
+            i2c::I2c<'_, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>,
+        >,
     > = StaticCell::new();
-    static UART_BUS: StaticCell<Mutex<NoopRawMutex, usart::Uart<embassy_stm32::mode::Async>>> =
-        StaticCell::new();
+    static UART_BUS: StaticCell<
+        Mutex<CriticalSectionRawMutex, usart::Uart<embassy_stm32::mode::Async>>,
+    > = StaticCell::new();
 
     static UART_INTERFACE: StaticCell<usart::Uart<'_, embassy_stm32::mode::Async>> =
         StaticCell::new();
+    static READY: Watch<CriticalSectionRawMutex, (), 16> = Watch::new();
     let mut config = embassy_stm32::Config::default();
 
     // Fine-tune PLL1 dividers/multipliers
@@ -221,7 +218,9 @@ async fn main(spawner: Spawner) {
 
     let mut i2c_config = i2c::Config::default();
     i2c_config.timeout = Duration::from_millis(500);
-    i2c_config.frequency = khz(400);
+    i2c_config.frequency = khz(100);
+    i2c_config.sda_pullup = true;
+    i2c_config.scl_pullup = true;
     let i2cport = i2c::I2c::new(
         p.I2C1,
         scl,
@@ -302,6 +301,36 @@ async fn main(spawner: Spawner) {
             position: (-6.75, 6.75, 0.0),
         },
     ];
+    let sensors = sensor_params.map(|sensor_param| init_sensor(sensor_param, i2c_bus));
+    let mut s = [const { None }; 16];
+    let mut i = 0;
+    for p in sensors {
+        Timer::after_micros(100).await;
+        s[i] = Some(p.await);
+        i = i + 1;
+    }
+    let mut uart = {
+        let uart = WritableDevice::new(uart_bus);
+        uart
+    };
 
-    let _ = spawner.spawn(send_sensor2(sensor_params, uart_bus, i2c_bus));
+    loop {
+        for p in &mut s {
+            //let val = sensor.send_message(&mut uart).await;
+            if let Some(sens) = p {
+                let val = sens.send_message(&mut uart).await;
+
+                match val {
+                    Ok(v) => {
+                        debug!("{:#02x}: {:#?}", v.address, v.field);
+                    }
+                    Err(v) => {
+                        //debug!("{:#?}", v);
+                    }
+                }
+            }
+        }
+    }
+
+    //READY.sender().send(());
 }

@@ -1,6 +1,5 @@
 use defmt::write;
-use heapless::Vec;
-use postcard::{accumulator::CobsAccumulator, experimental::max_size::MaxSize};
+use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
 use crate::conversions::MagneticField;
@@ -113,7 +112,7 @@ impl Message {
                 let cobs = postcard::take_from_bytes_cobs::<Message>(buf)?;
                 Ok(cobs)
             })
-            .filter(|cobs| cobs.as_ref().is_ok_and(|c| c.1.len() == 0))
+            .filter(|cobs| cobs.as_ref().is_ok_and(|c| c.1.is_empty()))
             .map(|x| x.map(|y| y.0))
             .collect();
 
@@ -163,6 +162,13 @@ pub struct MessageReader {
 }
 
 #[cfg(feature = "use-std")]
+impl Default for MessageReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "use-std")]
 impl MessageReader {
     pub fn new() -> Self {
         Self {
@@ -170,7 +176,6 @@ impl MessageReader {
         }
     }
 
-    #[cfg(feature = "use-std")]
     pub fn read_all<T: std::io::Read>(
         &mut self,
         reader: &mut T,
@@ -180,6 +185,6 @@ impl MessageReader {
         self.buf.extend(buffer);
         let (values, remaining) = Message::read_all_buf(&mut self.buf);
         self.buf = remaining.to_vec();
-        return values;
+        values
     }
 }

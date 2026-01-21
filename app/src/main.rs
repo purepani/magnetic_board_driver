@@ -1,25 +1,7 @@
-use std::{
-    collections::BTreeMap,
-    io::{self, Write},
-    thread::sleep,
-    time::Duration,
-};
+use std::{collections::BTreeMap, time::Duration};
 
-use crossterm::{
-    cursor,
-    event::{self, Event, KeyCode},
-    execute, queue,
-    style::{self, Stylize},
-    terminal,
-};
-use data_transfer::conversions::{MagneticField, MagneticValue, TempValue};
-use postcard::from_bytes;
-use ratatui::{
-    text::Text,
-    widgets::{Paragraph, Row},
-    Frame,
-};
-use serialport::SerialPort;
+use crossterm::event::{self, Event, KeyCode};
+use ratatui::{text::Text, widgets::Row, Frame};
 mod sensor_monitor;
 use sensor_monitor::MagneticData;
 use tokio::sync::watch::{self, Receiver};
@@ -158,10 +140,13 @@ fn view(model: &mut Model, frame: &mut Frame) {
                     data_transfer::conversions::MagneticValue::uT(x) => format!("{:.3}", x),
                 })
             });
-            Row::new(vec![address.to_string(), x, y, z, data.time.to_string()])
+            let t = data.field.t.map_or("0".to_string(), |val| match val {
+                data_transfer::conversions::TempValue::Celsius(t) => format!("{:.3}", t),
+            });
+            Row::new(vec![address.to_string(), x, y, z, t, data.time.to_string()])
         })
         .collect::<Vec<_>>();
-    let table = ratatui::widgets::Table::new(rows, [15, 15, 15, 15, 15]);
+    let table = ratatui::widgets::Table::new(rows, [15, 15, 15, 15, 15, 15]);
     //frame.render_widget(Paragraph::new(format!("Magnetic fields")), frame.area());
     //frame.render_widget(
     //Paragraph::new(format!("Magnetic fields empty: {}", model.data.is_empty())),

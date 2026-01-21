@@ -1,10 +1,5 @@
-use bitmatch::bitmatch;
 use defmt::Format;
-use embedded_io;
-use postcard::{
-    experimental::max_size::MaxSize,
-    ser_flavors::{self, Cobs, Slice},
-};
+use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
 use crate::memory::{

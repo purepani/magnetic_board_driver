@@ -3,11 +3,11 @@ use data_transfer::{
     messaging::{self, Writable},
 };
 use defmt::Format;
+use defmt::{debug, info};
 use embassy_stm32::exti::ExtiInput;
 use embassy_time::{Instant, Timer};
 use embedded_hal_async::{digital::Wait, i2c::I2c};
 use embedded_io::Write;
-
 
 use super::sensor::MLX90393;
 
@@ -16,10 +16,7 @@ pub struct Sensor<I, P> {
     mlx: MLX90393<I, P>,
 }
 
-impl<I: I2c, P: Wait> Sensor<I, Option<P>>
-where
-    <I as embedded_hal_async::i2c::ErrorType>::Error: Format,
-{
+impl<I: I2c, P: Wait> Sensor<I, Option<P>> {
     pub async fn new(address: u8, i2c: I, position: (f32, f32, f32)) -> Self
 where {
         let mlx = MLX90393::new(address, None, i2c);
@@ -39,44 +36,43 @@ where {
         &mut self,
         writer: &mut W,
     ) -> Result<messaging::Message, data_transfer::messaging::Error> {
-        self.mlx
-            .set_single_measurmenet::<true, true, true, true>()
-            .await;
-        Timer::after_millis(10).await;
+        //self.mlx
+        //.set_single_measurmenet::<true, true, true, true>()
+        //.await;
+        //Timer::after_millis(10).await;
         let (status, field) = self.mlx.get_field::<true, true, true, true>().await;
         //if status.is_some_and(|val| !val.burst_mode) {
         //self.mlx.set_burst::<true, true, true, true>().await;
         //}
+        if status.error {
+            return Err(data_transfer::messaging::Error::FailedRead);
+        }
         let time = Instant::now().as_micros();
-        let message = messaging::Message::new(
-            field.unwrap_or_default(),
-            self.position,
-            self.mlx.address,
-            time,
-        );
+        let message =
+            field.map(|f| messaging::Message::new(f, self.position, self.mlx.address, time));
+        let message = message.ok_or(data_transfer::messaging::Error::FailedRead)?;
         message.write_to(writer).await?;
         Ok(message)
     }
 
-    pub async fn get_message(
-        &mut self,
-    ) -> Result<messaging::Message, data_transfer::messaging::Error> {
-        self.mlx
-            .set_single_measurmenet::<true, true, true, true>()
-            .await;
-        Timer::after_millis(50).await;
+    pub async fn get_message(&mut self) -> Result<messaging::Message, ()> {
+        //self.mlx
+        //   .set_single_measurmenet::<true, true, true, true>()
+        //  .await;
+        //Timer::after_millis(50).await;
         let (status, field) = self.mlx.get_field::<true, true, true, true>().await;
+        //debug!("{:#?}", status);
         //if status.is_some_and(|val| !val.burst_mode) {
         //self.mlx.set_burst::<true, true, true, true>().await;
         //}
         let time = Instant::now().as_micros();
-        let message = messaging::Message::new(
-            field.unwrap_or_default(),
-            self.position,
-            self.mlx.address,
-            time,
-        );
-        Ok(message)
+        let message =
+            field.map(|f| messaging::Message::new(f, self.position, self.mlx.address, time));
+        message.ok_or(())
+    }
+
+    pub async fn set_burst_mode(&mut self) {
+        self.mlx.set_burst::<true, true, true, true>().await
     }
 }
 
