@@ -20,6 +20,7 @@
             bacon
             pkg-config
             udev
+            rust-analyzer
           ]; # whatever you need
 
           shellHook = ''

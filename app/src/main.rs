@@ -143,7 +143,14 @@ fn view(model: &mut Model, frame: &mut Frame) {
             let t = data.field.t.map_or("0".to_string(), |val| match val {
                 data_transfer::conversions::TempValue::Celsius(t) => format!("{:.3}", t),
             });
-            Row::new(vec![address.to_string(), x, y, z, t, data.time.to_string()])
+            Row::new(vec![
+                format!("{:#x}", address),
+                x,
+                y,
+                z,
+                t,
+                data.time.to_string(),
+            ])
         })
         .collect::<Vec<_>>();
     let table = ratatui::widgets::Table::new(rows, [15, 15, 15, 15, 15, 15]);

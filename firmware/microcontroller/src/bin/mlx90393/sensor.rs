@@ -33,7 +33,7 @@ bitflags! {
     }
 }
 
-#[derive(defmt::Format)]
+#[derive(Debug, defmt::Format)]
 pub struct Status {
     pub burst_mode: bool,
     pub woc_mode: bool,
@@ -150,7 +150,7 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
 
     pub async fn read_register<const R: u8>(&mut self) -> Register<R> {
         let command = Command::read_register(R);
-        let (status, data) = self.run_command_with_wait(command, 100).await;
+        let (status, data) = self.run_command(command).await;
         let [_, data1, data2] = data;
         let d = [data1, data2];
         Register::<R>::new(d)
@@ -231,9 +231,9 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
         } else if let Some(state) = self.state {
             let magnetic_axis_count =
                 u64::try_from([X, Y, Z].into_iter().filter(|x| *x).count()).unwrap();
-            let conversion_time = T_STBY_MICRO
-                + T_ACTIVE_MICRO
-                + magnetic_axis_count * state.magnetic_conversion_time
+            let conversion_time = //T_STBY_MICRO
+                T_ACTIVE_MICRO
+               + magnetic_axis_count * state.magnetic_conversion_time
                 + state.temperature_conversion_time
                 + T_CONV_END_MICRO;
             let _ = Timer::after_micros(conversion_time).await;
@@ -419,9 +419,9 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
                 }
             }
         };
-
+        return (status, mbits);
+        //Timer::after_micros(15).await;
         //info!("{}", status);
-        (status, mbits)
     }
 
     pub async fn get_field<const X: bool, const Y: bool, const Z: bool, const TEMP: bool>(

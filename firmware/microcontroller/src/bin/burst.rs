@@ -292,21 +292,25 @@ async fn main(spawner: Spawner) {
             address: 0x19,
             position: (-6.75, -2.75, 0.0),
         },
-        //        SensorParams {
-        //           address: 0x20,
-        //          position: (-6.75, 2.75, 0.0),
-        //     },
-        //    SensorParams {
-        //       address: 0x21,
-        //      position: (-6.75, 6.75, 0.0),
-        // },
+        //  SensorParams {
+        //     address: 0x20,
+        //    position: (-6.75, 2.75, 0.0),
+        //},
+        //SensorParams {
+        //address: 0x21,
+        //position: (-6.75, 6.75, 0.0),
+        //},
     ];
     let sensors = sensor_params.map(|sensor_param| init_sensor(sensor_param, i2c_bus));
     let mut s = [const { None }; 16];
+
+    let len = s.len();
     let mut i = 0;
     for p in sensors {
-        Timer::after_micros(100).await;
-        s[i] = Some(p.await);
+        //Timer::after_micros(100).await;
+        if i < len {
+            s[i] = Some(p.await);
+        };
         i = i + 1;
     }
     let mut uart = {
@@ -317,7 +321,7 @@ async fn main(spawner: Spawner) {
     loop {
         for p in &mut s {
             //let val = sensor.send_message(&mut uart).await;
-            Timer::after_micros(100).await;
+            //Timer::after_micros(100).await;
             match p {
                 Some(sens) => {
                     let val = sens.send_message(&mut uart).await;
@@ -332,7 +336,7 @@ async fn main(spawner: Spawner) {
                     }
                 }
                 None => {
-                    debug!("Error");
+                    debug!("Error or missing sensor");
                 }
             }
             if let Some(sens) = p {}

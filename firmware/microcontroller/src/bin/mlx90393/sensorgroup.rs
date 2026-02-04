@@ -9,11 +9,23 @@ use embassy_time::{Instant, Timer};
 use embedded_hal_async::{digital::Wait, i2c::I2c};
 use embedded_io::Write;
 
-use super::sensor::MLX90393;
+use super::sensor::{Status, MLX90393};
 
 pub struct Sensor<I, P> {
     pub position: (f32, f32, f32),
     mlx: MLX90393<I, P>,
+}
+
+#[derive(Debug, Format)]
+pub enum Error {
+    DataError(messaging::Error),
+    StatusError(Status),
+}
+
+impl From<messaging::Error> for Error {
+    fn from(value: messaging::Error) -> Self {
+        Self::DataError(value)
+    }
 }
 
 impl<I: I2c, P: Wait> Sensor<I, Option<P>> {
@@ -35,7 +47,7 @@ where {
     pub async fn send_message<W: embedded_io_async::Write>(
         &mut self,
         writer: &mut W,
-    ) -> Result<messaging::Message, data_transfer::messaging::Error> {
+    ) -> Result<messaging::Message, Error> {
         //self.mlx
         //.set_single_measurmenet::<true, true, true, true>()
         //.await;
@@ -45,7 +57,7 @@ where {
         //self.mlx.set_burst::<true, true, true, true>().await;
         //}
         if status.error {
-            return Err(data_transfer::messaging::Error::FailedRead);
+            return Err(Error::StatusError(status));
         }
         let time = Instant::now().as_micros();
         let message =
