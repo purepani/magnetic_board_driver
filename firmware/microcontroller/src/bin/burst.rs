@@ -99,7 +99,7 @@ async fn init_sensor(
     let sensor_builder = SensorBuilder::new_stm(sensor_address, sensor_position);
     let i2c_device = I2cDevice::new(i2c_bus);
     let mut sensor = sensor_builder.with_i2c(i2c_device).await;
-    sensor.set_burst_mode().await;
+    //sensor.set_burst_mode().await;
     sensor
 }
 
@@ -292,14 +292,14 @@ async fn main(spawner: Spawner) {
             address: 0x19,
             position: (-6.75, -2.75, 0.0),
         },
-        //  SensorParams {
-        //     address: 0x20,
-        //    position: (-6.75, 2.75, 0.0),
-        //},
-        //SensorParams {
-        //address: 0x21,
-        //position: (-6.75, 6.75, 0.0),
-        //},
+        SensorParams {
+            address: 0x1A,
+            position: (-6.75, 2.75, 0.0),
+        },
+        SensorParams {
+            address: 0x1B,
+            position: (-6.75, 6.75, 0.0),
+        },
     ];
     let sensors = sensor_params.map(|sensor_param| init_sensor(sensor_param, i2c_bus));
     let mut s = [const { None }; 16];

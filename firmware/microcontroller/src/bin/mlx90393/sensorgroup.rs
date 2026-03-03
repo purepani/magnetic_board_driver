@@ -48,10 +48,10 @@ where {
         &mut self,
         writer: &mut W,
     ) -> Result<messaging::Message, Error> {
-        //self.mlx
-        //.set_single_measurmenet::<true, true, true, true>()
-        //.await;
-        //Timer::after_millis(10).await;
+        self.mlx
+            .set_single_measurmenet::<true, true, true, true>()
+            .await;
+        //Timer::after_millis(50).await;
         let (status, field) = self.mlx.get_field::<true, true, true, true>().await;
         //if status.is_some_and(|val| !val.burst_mode) {
         //self.mlx.set_burst::<true, true, true, true>().await;
@@ -68,10 +68,10 @@ where {
     }
 
     pub async fn get_message(&mut self) -> Result<messaging::Message, ()> {
-        //self.mlx
-        //   .set_single_measurmenet::<true, true, true, true>()
-        //  .await;
-        //Timer::after_millis(50).await;
+        self.mlx
+            .set_single_measurmenet::<true, true, true, true>()
+            .await;
+        Timer::after_millis(50).await;
         let (status, field) = self.mlx.get_field::<true, true, true, true>().await;
         //debug!("{:#?}", status);
         //if status.is_some_and(|val| !val.burst_mode) {

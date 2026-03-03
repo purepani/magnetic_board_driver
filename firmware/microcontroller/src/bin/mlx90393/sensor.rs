@@ -231,9 +231,9 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
         } else if let Some(state) = self.state {
             let magnetic_axis_count =
                 u64::try_from([X, Y, Z].into_iter().filter(|x| *x).count()).unwrap();
-            let conversion_time = //T_STBY_MICRO
-                T_ACTIVE_MICRO
-               + magnetic_axis_count * state.magnetic_conversion_time
+            let conversion_time = T_STBY_MICRO
+                + T_ACTIVE_MICRO
+                + magnetic_axis_count * state.magnetic_conversion_time
                 + state.temperature_conversion_time
                 + T_CONV_END_MICRO;
             let _ = Timer::after_micros(conversion_time).await;
