@@ -1,5 +1,3 @@
-
-
 //enum Event {
 //Command(CommandData),
 //MeasurementReady,

@@ -19,6 +19,8 @@ embedded-hal-async = {version="1.0.0", features=["defmt-03"]}
 crc = "3.2.1"
 embedded-io-async = "0.6.1"
 heapless = "0.8.0"
+postcard-rpc = { version = "0.12.1", features = ["embedded-io-async-0_6-server"] }
+postcard-schema = "0.2.5"
 
 
 [profile.release]

@@ -1,9 +1,11 @@
 use data_transfer::{
     conversions::MagneticField,
     messaging::{self, Writable},
+    rpc,
 };
 use defmt::Format;
 use defmt::{debug, info};
+use embassy_futures::join::join_array;
 use embassy_stm32::exti::ExtiInput;
 use embassy_time::{Instant, Timer};
 use embedded_hal_async::{digital::Wait, i2c::I2c};
@@ -114,10 +116,70 @@ impl<'a> SensorBuilder {
         Self { address, position }
     }
 
-    pub async fn with_i2c<I: I2c>(self, i2c: I) -> Sensor<I, Option<ExtiInput<'a>>>
+    pub async fn with_i2c<I: I2c>(&mut self, i2c: I) -> Sensor<I, Option<ExtiInput<'a>>>
     where
         <I as embedded_hal_async::i2c::ErrorType>::Error: Format,
     {
         Sensor::new_stm(self.address, self.position, i2c).await
+    }
+}
+
+pub struct SensorGroup<I, P, const N: usize = 16> {
+    pub board_id: u16,
+    pub sensors: [Sensor<I, P>; N],
+}
+
+impl<I: I2c, P: Wait, const N: usize> SensorGroup<I, Option<P>, N> {
+    pub async fn get_message(&mut self, index: usize) -> Result<rpc::SensorField, ()> {
+        let mut sensor = self.sensors.get_mut(index).ok_or(())?;
+        let message = sensor.get_message().await?;
+        Ok(rpc::SensorField {
+            address: message.address,
+            field: message.field,
+            position: message.position,
+            time: message.time,
+            board_id: self.board_id,
+        })
+    }
+
+    pub fn num_sensors(&self) -> usize {
+        N
+    }
+}
+
+pub struct SensorGroupBuilder<const N: usize> {
+    board_id: u16,
+    sensor_builders: [SensorBuilder; N],
+}
+
+impl<'a, const N: usize> SensorGroupBuilder<N> {
+    pub fn new_stm(board_id: u16, sensor_builders: [SensorBuilder; N]) -> Self {
+        Self {
+            board_id,
+            sensor_builders,
+        }
+    }
+    pub async fn with_i2c<I: I2c>(
+        &mut self,
+        i2cs: [I; N],
+    ) -> SensorGroup<I, Option<ExtiInput<'a>>, N>
+    where
+        <I as embedded_hal_async::i2c::ErrorType>::Error: Format,
+    {
+        let sensors_builders = self.sensor_builders.each_mut();
+
+        let sensors_future = core::array::from_fn(async |i| {
+            //SAFETY: Zipping arrays together together
+            let sensor_builder = unsafe { core::ptr::read(&sensors_builders[i]) };
+            let i2c = unsafe { core::ptr::read(&i2cs[i]) };
+            sensor_builder.with_i2c(i2c).await
+        });
+
+        let sensors = join_array(sensors_future).await;
+
+        SensorGroup {
+            board_id: self.board_id,
+            sensors,
+        }
     }
 }

@@ -1,0 +1,104 @@
+#![no_std]
+#![no_main]
+
+use crate::mlx90393::sensorgroup::SensorGroup;
+use defmt::info;
+use data_transfer::rpc::{
+    ENDPOINT_LIST, PingEndpoint, StartFieldStream, StopFieldStream, SingleFieldValue,
+    TOPICS_IN_LIST, TOPICS_OUT_LIST,
+};
+use embedded_hal_async::{digital::Wait, i2c::I2c};
+use embassy_sync::{
+    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, RawMutex, ThreadModeRawMutex},
+};
+use embassy_stm32::exti::ExtiInput;
+use postcard_rpc::{
+    define_dispatch,
+    
+    server::{
+        Server,
+        impls::embedded_io_async_v0_7::{
+            EioWireTx,
+            dispatch_impl::{WireRxBuf, WireRxImpl, WireSpawnImpl},
+            WireStorage,
+        },
+    },
+};
+use crate::handlers::{ping_handler, single_request_handler};
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
+use {defmt_rtt as _, panic_probe as _};
+
+pub struct Context<const N: usize=1> {
+    pub sensor_groups: [SensorGroup<I2cDevice<'static, CriticalSectionRawMutex, embassy_stm32::i2c::I2c<'static, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>>, Option<ExtiInput<'static>>>; N],
+}
+
+pub type Rx = embassy_stm32::usart::RingBufferedUartRx<'static>;
+pub type Tx = embassy_stm32::usart::UartTx<'static, embassy_stm32::mode::Async>;
+pub type Storage = WireStorage<Rx, Tx, CriticalSectionRawMutex, 512, 512>;
+pub type AppTx = EioWireTx<CriticalSectionRawMutex, Tx>;
+
+/// AppRx is the type of our receiver, which is how we receive information from the client
+pub type AppRx = WireRxImpl<Rx>;
+/// AppServer is the type of the postcard-rpc server we are using
+pub type AppServer = Server<AppTx, AppRx, WireRxBuf, MyApp>;
+
+
+pub static STORAGE: Storage = Storage::new();
+define_dispatch! {
+    // You can set the name of your app to any valid Rust type name. We use
+    // "MyApp" here. You'll use this in `main` to create an instance of the
+    // app.
+    app: MyApp;
+    // This chooses how we spawn functions. Here, we use the implementation
+    // from the `embassy_usb_v0_4` implementation
+    spawn_fn: spawn_fn;
+    // This is our TX impl, which we aliased above
+    tx_impl: AppTx;
+    // This is our spawn impl, which also comes from `embassy_usb_v0_4`.
+    spawn_impl: WireSpawnImpl;
+    // This is the context type we defined above
+    context: Context;
+
+    // Endpoints are how we handle request/response pairs from the client.
+    //
+    // The "EndpointTy" are the names of the endpoints we defined in our ICD
+    // crate. The "kind" is the kind of handler, which can be "blocking",
+    // "async", or "spawn". Blocking endpoints will be called directly.
+    // Async endpoints will also be called directly, but will be await-ed on,
+    // allowing you to call async functions. Spawn endpoints will spawn an
+    // embassy task, which allows for handling messages that may take some
+    // amount of time to complete.
+    //
+    // The "handler"s are the names of the functions (or tasks) that will be
+    // called when messages from this endpoint are received.
+    endpoints: {
+        // This list comes from our ICD crate. All of the endpoint handlers we
+        // define below MUST be contained in this list.
+        list: ENDPOINT_LIST;
+
+        | EndpointTy                | kind      | handler                       |
+        | ----------                | ----      | -------                       |
+        | PingEndpoint              | blocking  | ping_handler                  |
+        | SingleFieldValue          | async     | single_request_handler        |
+ 
+    };
+
+    // Topics IN are messages we receive from the client, but that we do not reply
+    // directly to. These have the same "kinds" and "handlers" as endpoints, however
+    // these handlers never return a value
+    topics_in: {
+        // This list comes from our ICD crate. All of the topic handlers we
+        // define below MUST be contained in this list.
+        list: TOPICS_IN_LIST;
+
+        | TopicTy                   | kind      | handler                       |
+        | ----------                | ----      | -------                       |
+    };
+
+    // Topics OUT are the messages we send to the client whenever we'd like. Since
+    // these are outgoing, we do not need to define handlers for them.
+    topics_out: {
+        // This list comes from our ICD crate.
+        list: TOPICS_OUT_LIST;
+    };
+}

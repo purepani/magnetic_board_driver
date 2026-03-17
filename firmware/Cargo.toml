@@ -36,3 +36,7 @@
 [workspace]
 members = ["microcontroller"]
 resolver="2"
+
+
+[patch.crates-io]
+postcard-rpc = { git = 'https://github.com/tweedegolf/postcard-rpc.git', branch = "eio_0_7"}

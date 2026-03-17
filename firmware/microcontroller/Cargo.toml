@@ -5,7 +5,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-embassy-stm32 = { version = "0.4.0",  features = [ "defmt", "stm32wba55cg", "time-driver-any", "memory-x", "exti", "time"]  }
+embassy-stm32 = { version = "0.5.0",  features = [ "defmt", "stm32wba55cg", "time-driver-any", "memory-x", "exti", "time"]  }
 embassy-sync = { version = "0.7.2",  features = ["defmt"] }
 embassy-executor = { version = "0.9.1", features = ["defmt", "arch-cortex-m", "executor-thread", "executor-interrupt",] }
 embassy-time = { version = "0.5.0",  features = ["defmt", "defmt-timestamp-uptime" ,"tick-hz-32_768"] }
@@ -33,6 +33,7 @@ embedded-hal-bus = { version = "0.3.0", features = ["async"] }
 embassy-embedded-hal = "0.5.0"
 embedded-io-async = "0.6.0"
 embassy-futures = "0.1.2"
+postcard-rpc = { version = "0.12.1", features = ["embedded-io-async-0_7-server"] }
 
 
 [profile.release]

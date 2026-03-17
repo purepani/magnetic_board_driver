@@ -2,3 +2,4 @@
 pub mod conversions;
 pub mod memory;
 pub mod messaging;
+pub mod rpc;

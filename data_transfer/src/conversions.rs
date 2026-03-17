@@ -1,10 +1,12 @@
 use defmt::Format;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
+use postcard_schema::Schema;
 
 use crate::memory::{
     Gain, HallConf, Res3D, Resolution, TempOffset, TempRef, TemperatureCompensation,
 };
+
 
 pub struct MagneticBits {
     pub x: Option<[u8; 2]>,
@@ -101,7 +103,7 @@ impl SensitivityPerBit {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug, MaxSize)]
+#[derive(Serialize, Deserialize, Schema, Clone, Copy, Format, Debug, MaxSize, PartialEq)]
 pub enum TempValue {
     Celsius(f64),
 }
@@ -127,7 +129,7 @@ impl TempValue {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug, Default, MaxSize)]
+#[derive(Serialize, Deserialize, PartialEq, Schema, Clone, Copy, Format, Debug, Default, MaxSize)]
 pub struct MagneticField {
     pub x: Option<MagneticValue>,
     pub y: Option<MagneticValue>,
@@ -188,7 +190,7 @@ pub enum Error {
     FailedWrite,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Format, Debug, MaxSize)]
+#[derive(Serialize, Deserialize, Schema, PartialEq, Clone, Copy, Format, Debug, MaxSize)]
 #[repr(usize)]
 pub enum MagneticValue {
     uT(f64),

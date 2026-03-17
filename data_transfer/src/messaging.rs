@@ -1,5 +1,6 @@
 use defmt::write;
 use postcard::experimental::max_size::MaxSize;
+
 use serde::{Deserialize, Serialize};
 
 use crate::conversions::MagneticField;

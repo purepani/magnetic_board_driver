@@ -26,7 +26,7 @@ impl Model {
         Model::default()
     }
 
-    pub fn modify_from_message(&mut self, message: BTreeMap<u8, MagneticData>) -> &mut Self {
+    pub fn modify_from_message(&mut self, message: BTreeMap<u8, MagneticDataMagneticData>) -> &mut Self {
         self.data = message;
         self
     }

@@ -20,6 +20,7 @@ tokio-util = "0.7.12"
 futures = "0.3.31"
 crc = "3.2.1"
 color-eyre = "0.6.3"
+iced = "0.14.0"
 
 
 
