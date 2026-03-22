@@ -164,7 +164,7 @@ async fn main(spawner: Spawner) {
     let sensor_builders: [_; 16] = core::array::from_fn(|i| SensorBuilder::new_stm(0x0C+(i as u8), (0.0, 0.0, 0.0)));
     let mut sensor_group_builder = SensorGroupBuilder::new_stm(0, sensor_builders);
     let mut sensor_groups = [sensor_group_builder.with_i2c(i2c_devices).await; 1];
-
+    let sensor_groups = sensor_groups.map(Mutex::new);
 
     let impls = STORAGE.init(uart_rx, uart_tx);
     match impls {

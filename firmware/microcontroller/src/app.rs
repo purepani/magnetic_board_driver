@@ -1,35 +1,60 @@
 #![no_std]
 #![no_main]
 
+use crate::handlers::{ping_handler, single_request_handler};
 use crate::mlx90393::sensorgroup::SensorGroup;
-use defmt::info;
 use data_transfer::rpc::{
-    ENDPOINT_LIST, PingEndpoint, StartFieldStream, StopFieldStream, SingleFieldValue,
+    PingEndpoint, SingleFieldValue, StartFieldStream, StopFieldStream, ENDPOINT_LIST,
     TOPICS_IN_LIST, TOPICS_OUT_LIST,
 };
-use embedded_hal_async::{digital::Wait, i2c::I2c};
-use embassy_sync::{
-    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, RawMutex, ThreadModeRawMutex},
-};
+use defmt::info;
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_stm32::exti::ExtiInput;
+use embassy_sync::blocking_mutex::raw::{
+    CriticalSectionRawMutex, NoopRawMutex, RawMutex, ThreadModeRawMutex,
+};
+use embedded_hal_async::{digital::Wait, i2c::I2c};
 use postcard_rpc::{
     define_dispatch,
-    
     server::{
-        Server,
         impls::embedded_io_async_v0_7::{
-            EioWireTx,
             dispatch_impl::{WireRxBuf, WireRxImpl, WireSpawnImpl},
-            WireStorage,
+            EioWireTx, WireStorage,
         },
+        Server, SpawnContext,
     },
 };
-use crate::handlers::{ping_handler, single_request_handler};
-use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
+use embassy_sync::mutex::Mutex;
 use {defmt_rtt as _, panic_probe as _};
 
-pub struct Context<const N: usize=1> {
-    pub sensor_groups: [SensorGroup<I2cDevice<'static, CriticalSectionRawMutex, embassy_stm32::i2c::I2c<'static, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>>, Option<ExtiInput<'static>>>; N],
+type SensorGroupDefault =Mutex<CriticalSectionRawMutex, SensorGroup<
+        I2cDevice<
+            'static,
+            CriticalSectionRawMutex,
+            embassy_stm32::i2c::I2c<
+                'static,
+                embassy_stm32::mode::Async,
+                embassy_stm32::i2c::Master,
+            >,
+        >,
+        Option<ExtiInput<'static>>,
+    >>;
+
+pub struct Context<const N: usize = 1> {
+    pub sensor_groups: [SensorGroupDefault; N],
+}
+
+pub struct SpawnCtx<const N: usize > {
+    sensor_groups: [&'a mut SensorGroupDefault; N]
+}
+
+impl<const N: usize> SpawnContext for Context<N> {
+    type SpawnCtxt = SpawnCtx<N>;
+    fn spawn_ctxt(&mut self) -> Self::SpawnCtxt {
+        SpawnCtx {
+            sensor_groups: self.sensor_groups.map(Mutex::get_mut)
+        }
+    }
 }
 
 pub type Rx = embassy_stm32::usart::RingBufferedUartRx<'static>;
@@ -41,7 +66,6 @@ pub type AppTx = EioWireTx<CriticalSectionRawMutex, Tx>;
 pub type AppRx = WireRxImpl<Rx>;
 /// AppServer is the type of the postcard-rpc server we are using
 pub type AppServer = Server<AppTx, AppRx, WireRxBuf, MyApp>;
-
 
 pub static STORAGE: Storage = Storage::new();
 define_dispatch! {
@@ -80,7 +104,7 @@ define_dispatch! {
         | ----------                | ----      | -------                       |
         | PingEndpoint              | blocking  | ping_handler                  |
         | SingleFieldValue          | async     | single_request_handler        |
- 
+
     };
 
     // Topics IN are messages we receive from the client, but that we do not reply
