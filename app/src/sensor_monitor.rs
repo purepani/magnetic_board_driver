@@ -1,13 +1,46 @@
+use crate::SerialPortInfo;
 use std::time::Duration;
 
-use data_transfer::{
-    self,
-    messaging::MessageReader,
-};
+use data_transfer::{self, messaging::MessageReader, rpc::{SensorField, SingleFieldValue}};
 
-pub struct SensorWatcher<P = ()> {
-    port: P,
-    message_reader: MessageReader,
+use postcard_rpc::{
+    header::VarSeqKind,
+    host_client::{HostClient, HostErr},
+    standard_icd::{PingEndpoint, WireError, ERROR_PATH},
+};
+use std::convert::Infallible;
+
+
+#[derive(Debug)]
+pub struct SensorWatcher {
+    client: HostClient<WireError>,
+    port_info: SerialPortInfo,
+}
+
+#[derive(Debug)]
+pub enum SensorError<E> {
+    Comms(HostErr<WireError>),
+    Endpoint(E),
+}
+
+impl<E> From<HostErr<WireError>> for SensorError<E> {
+    fn from(value: HostErr<WireError>) -> Self {
+        Self::Comms(value)
+    }
+}
+
+trait FlattenErr {
+    type Good;
+    type Bad;
+    fn flatten(self) -> Result<Self::Good, SensorError<Self::Bad>>;
+}
+
+impl<T, E> FlattenErr for Result<T, E> {
+    type Good = T;
+    type Bad = E;
+    fn flatten(self) -> Result<Self::Good, SensorError<Self::Bad>> {
+        self.map_err(SensorError::Endpoint)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -28,40 +61,32 @@ impl MagneticData {
 }
 
 impl SensorWatcher {
-    pub fn new() -> SensorWatcher<Box<dyn serialport::SerialPort + 'static>> {
-        let p = serialport::available_ports().expect("Serial Port not found");
+    pub fn new(serial_port_info: &SerialPortInfo) -> SensorWatcher {
+        let p = &serial_port_info.0.port_name;
         let baud_rate = 115200;
-        let port_builder = serialport::new(p.first().unwrap().port_name.clone(), baud_rate);
-        let mut port = port_builder.open().unwrap();
-        let message_reader = MessageReader::new();
-        let _ = port.write(&[1; 8]);
+
+        let client =
+            HostClient::<WireError>::new_serial_cobs(p, ERROR_PATH, 64, 115_200, VarSeqKind::Seq2);
+
         SensorWatcher {
-            port,
-            message_reader,
+            client,
+            port_info: serial_port_info.clone(),
         }
+    }
+
+    pub fn port_info(&self) -> &SerialPortInfo {
+        &self.port_info
+    }
+
+    pub fn get_client(&self) -> HostClient<WireError> {
+        self.client.clone()
+    }
+
+    pub async fn get_single_sensor_field(&self, board: u32, sensor: u32) -> SensorField {
+        self.client.send_resp::<SingleFieldValue>(&(board, sensor)).await.unwrap()
     }
 }
 
-impl<P: std::io::Read> SensorWatcher<P> {
-    pub async fn update(&mut self) -> Vec<(u8, MagneticData)> {
-        tokio::time::sleep(Duration::from_micros(100)).await;
-        //let parsed_values = data_transfer::messaging::Message::read_all(&mut self.port);
-        let parsed_values = self.message_reader.read_all(&mut self.port);
-        
-        parsed_values
-            .into_iter()
-            .filter_map(|msg| {
-                let msg = msg.ok()?;
-                Some((
-                    msg.address,
-                    MagneticData {
-                        field: msg.field,
-                        position: msg.position,
-                        time: msg.time,
-                    },
-                ))
-            })
-            .collect()
-    }
+impl SensorWatcher {
     pub fn watcher(&mut self) {}
 }

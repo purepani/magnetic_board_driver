@@ -1,199 +1,133 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use crossterm::event::{self, Event, KeyCode};
+use postcard_rpc::host_client::HostClient;
+use postcard_rpc::standard_icd::WireError;
 use ratatui::{text::Text, widgets::Row, Frame};
 mod sensor_monitor;
 use sensor_monitor::MagneticData;
 use tokio::sync::watch::{self, Receiver};
 
 use crate::sensor_monitor::SensorWatcher;
+use iced::widget::{button, column, combo_box, container, row, text, text_input};
+use iced::{Element, Task};
+use std::fmt::{Display, format};
 
-#[derive(Debug, Default, PartialEq)]
-enum RunningState {
-    #[default]
-    Running,
-    Done,
-}
+use data_transfer::{
+    self,
+    messaging::MessageReader,
+    rpc::{SensorField, SingleFieldValue},
+};
 
-#[derive(Debug, Default)]
-struct Model {
-    pub data: BTreeMap<u8, MagneticData>,
-    pub state: RunningState,
-}
+#[derive(Debug, Clone)]
+struct SerialPortInfo(serialport::SerialPortInfo);
 
-impl Model {
-    pub fn new() -> Self {
-        Model::default()
-    }
-
-    pub fn modify_from_message(&mut self, message: BTreeMap<u8, MagneticDataMagneticData>) -> &mut Self {
-        self.data = message;
-        self
+impl Display for SerialPortInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.port_name)
     }
 }
 
+#[derive(Debug, Clone)]
 enum Message {
-    RecievedField(BTreeMap<u8, MagneticData>),
-    Quit,
+    PortSelected(SerialPortInfo),
+    UpdatePorts,
+    UpdatePingBoard(String),
+    UpdatePingSensor(String),
+    GetField,
+    RecievedField(data_transfer::rpc::SensorField),
+}
+
+#[derive(Debug, Clone, Default)]
+struct PingArgs {
+    board: String,
+    sensor: String,
+}
+
+#[derive(Default)]
+struct Context {
+    sensor_watcher: Option<SensorWatcher>,
+    sensors: combo_box::State<SerialPortInfo>,
+    ping_args: PingArgs,
+    ping_field: Option<SensorField>,
+}
+
+async fn get_single_value(board: u32, sensor: u32, client: HostClient<WireError>) -> SensorField {
+    let args = (board, sensor);
+    client.send_resp::<SingleFieldValue>(&args).await.unwrap()
+}
+
+fn update(context: &mut Context, message: Message) -> Task<Message> {
+    match message {
+        Message::PortSelected(serial_port_info) => {
+            context.sensor_watcher = Some(SensorWatcher::new(&serial_port_info));
+            Task::none()
+        }
+        Message::UpdatePorts => {
+            let ports = serialport::available_ports()
+                .unwrap_or(Vec::new())
+                .into_iter()
+                .map(SerialPortInfo)
+                .collect();
+            let port_info = context.sensor_watcher.as_ref().map(|s| s.port_info());
+            context.sensors = combo_box::State::<_>::with_selection(ports, port_info);
+            Task::none()
+        }
+        Message::UpdatePingBoard(s) => {
+            context.ping_args.board = s;
+            Task::none()
+        }
+        Message::UpdatePingSensor(s) => {
+            context.ping_args.sensor = s;
+            Task::none()
+        }
+        Message::GetField => {
+            if let Some(sw) = &context.sensor_watcher {
+                let board = &context.ping_args.board;
+                let sensor = &context.ping_args.sensor;
+                let board = board.parse().unwrap_or(0);
+                let sensor = sensor.parse().unwrap_or(0);
+
+                let client = sw.get_client();
+                Task::perform(
+                    get_single_value(board, sensor, client), 
+                    Message::RecievedField,
+                )
+            } else {
+                Task::none()
+            }
+        }
+        Message::RecievedField(sensor_field) => {
+            context.ping_field = Some(sensor_field);
+            Task::none()
+        },
+    }
+}
+
+fn view(context: &Context) -> Element<'_, Message> {
+    let serial_selector = combo_box(
+        &context.sensors,
+        "Select Sensor",
+        context.sensor_watcher.as_ref().map(|s| s.port_info()),
+        Message::PortSelected,
+    )
+    .on_open(Message::UpdatePorts);
+
+    let ping_widget = container(row![
+        text("Board Number: "),
+        text_input("Board Number", &context.ping_args.board).on_input(Message::UpdatePingBoard),
+        text("Sensor Number: "),
+        text_input("Sensor Number", &context.ping_args.sensor).on_input(Message::UpdatePingSensor),
+        button("Get Field Value").on_press(Message::GetField),
+        text(format!("x: {:.2}", context.ping_field.as_ref().map(|f| f.field.x.map(|x| x.value()).unwrap_or(0.0)).unwrap_or(0.0))),
+        text(format!("y: {:.2}", context.ping_field.as_ref().map(|f| f.field.y.map(|y| y.value()).unwrap_or(0.0)).unwrap_or(0.0))),
+        text(format!("z: {:.2}", context.ping_field.as_ref().map(|f| f.field.z.map(|z| z.value()).unwrap_or(0.0)).unwrap_or(0.0))),
+    ]);
+
+    column![serial_selector, ping_widget].padding(10).into()
 }
 
 #[tokio::main]
-async fn main() -> color_eyre::Result<()> {
-    //let mut terminal = ratatui::init();
-    //loop {
-    //terminal.draw(draw).expect("failed to draw frame");
-    //if matches!(event::read().expect("failed to read event"), Event::Key(_)) {
-    //break;
-    //}
-    //}
-    //ratatui::restore();
-    //let mut stdout = std::io::stdout();
-    //let mut buffer = [0; 100000];
-    //
-    //
-    let data = BTreeMap::<u8, MagneticData>::new();
-    let (tx, mut rx) = watch::channel(data);
-    let watch_sensors = tokio::spawn(async move {
-        let mut watcher = SensorWatcher::new();
-        loop {
-            let vals = watcher.update();
-            for (address, val) in vals.await {
-                tx.send_if_modified(|all_data| {
-                    all_data.insert(address, val);
-                    true
-                });
-            }
-        }
-    });
-
-    let mut model = Model::new();
-    let mut terminal = tui::init_terminal()?;
-    //execute!(stdout, terminal::Clear(terminal::ClearType::All))?;
-    while model.state != RunningState::Done {
-        let _ = terminal.draw(|f| view(&mut model, f));
-        //sleep(Duration::new(0, 100000000));
-        //let val = data_transfer::messaging::Message::read(&mut port);
-        //let mut current_msg = val.ok().map(|msg| Message::RecievedField(msg));
-        let mut current_msg = handle_event(&model, &mut rx)?;
-        while current_msg.is_some() {
-            current_msg = update(&mut model, current_msg.unwrap());
-        }
-    }
-    watch_sensors.abort();
-    tui::restore_terminal()?;
-    Ok(())
-}
-
-fn draw(frame: &mut Frame) {
-    let text = Text::raw("Hello World!");
-    let block = ratatui::widgets::List::new(["test", "test2"]);
-    let rows = [Row::new(vec!["X", "Y", "Z", "TEMP"])];
-    let table = ratatui::widgets::Table::new(rows, [15, 15, 15, 15]);
-    frame.render_widget(table, frame.area());
-}
-
-fn update(model: &mut Model, msg: Message) -> Option<Message> {
-    match msg {
-        Message::RecievedField(field) => {
-            model.modify_from_message(field);
-            None
-        }
-        Message::Quit => {
-            model.state = RunningState::Done;
-            None
-        }
-    }
-}
-
-fn handle_event(
-    model: &Model,
-    rx: &mut Receiver<BTreeMap<u8, MagneticData>>,
-) -> color_eyre::Result<Option<Message>> {
-    if event::poll(Duration::from_millis(5))? {
-        if let Event::Key(key) = event::read()? {
-            if key.kind == event::KeyEventKind::Press {
-                return Ok(handle_key(key));
-            }
-        }
-    }
-    if rx.has_changed()? {
-        let val = rx.borrow_and_update();
-        return Ok(Some(Message::RecievedField(val.clone())));
-    }
-
-    Ok(None)
-}
-fn handle_key(key: event::KeyEvent) -> Option<Message> {
-    match key.code {
-        KeyCode::Char('q') => Some(Message::Quit),
-        _ => None,
-    }
-}
-
-fn view(model: &mut Model, frame: &mut Frame) {
-    let fields = model.data.iter();
-    //Row::new(vec!["X", "Y", "Z", "TEMP"]),
-    let rows = fields
-        .map(|(address, data)| {
-            let [x, y, z] = [data.field.x, data.field.y, data.field.z].map(|field| {
-                field.map_or("0".to_string(), |val| match val {
-                    data_transfer::conversions::MagneticValue::uT(x) => format!("{:.3}", x),
-                })
-            });
-            let t = data.field.t.map_or("0".to_string(), |val| match val {
-                data_transfer::conversions::TempValue::Celsius(t) => format!("{:.3}", t),
-            });
-            Row::new(vec![
-                format!("{:#x}", address),
-                x,
-                y,
-                z,
-                t,
-                data.time.to_string(),
-            ])
-        })
-        .collect::<Vec<_>>();
-    let table = ratatui::widgets::Table::new(rows, [15, 15, 15, 15, 15, 15]);
-    //frame.render_widget(Paragraph::new(format!("Magnetic fields")), frame.area());
-    //frame.render_widget(
-    //Paragraph::new(format!("Magnetic fields empty: {}", model.data.is_empty())),
-    //frame.area(),
-    //);
-    frame.render_widget(table, frame.area());
-}
-
-mod tui {
-    use ratatui::{
-        backend::{Backend, CrosstermBackend},
-        crossterm::{
-            terminal::{
-                disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-            },
-            ExecutableCommand,
-        },
-        Terminal,
-    };
-    use std::{io::stdout, panic};
-
-    pub fn init_terminal() -> color_eyre::Result<Terminal<impl Backend>> {
-        enable_raw_mode()?;
-        stdout().execute(EnterAlternateScreen)?;
-        let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
-        Ok(terminal)
-    }
-
-    pub fn restore_terminal() -> color_eyre::Result<()> {
-        stdout().execute(LeaveAlternateScreen)?;
-        disable_raw_mode()?;
-        Ok(())
-    }
-
-    pub fn install_panic_hook() {
-        let original_hook = panic::take_hook();
-        panic::set_hook(Box::new(move |panic_info| {
-            stdout().execute(LeaveAlternateScreen).unwrap();
-            disable_raw_mode().unwrap();
-            original_hook(panic_info);
-        }));
-    }
+pub async fn main() -> iced::Result {
+    iced::run(update, view)
 }

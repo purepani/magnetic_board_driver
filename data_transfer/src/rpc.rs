@@ -7,7 +7,7 @@ use defmt::Format;
 use crate::conversions::MagneticField;
 
 
-#[derive(Debug, Format, Serialize, Deserialize, Schema, PartialEq)]
+#[derive(Debug, Clone, Default, Format, Serialize, Deserialize, Schema, PartialEq)]
 pub struct SensorField {
     pub field: MagneticField,
     pub board_id: u16,
