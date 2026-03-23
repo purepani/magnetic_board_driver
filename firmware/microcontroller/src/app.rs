@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use crate::handlers::{ping_handler, single_request_handler};
+use crate::handlers::{ping_handler, single_request_handler, stream_field, stop_stream};
 use crate::mlx90393::sensorgroup::SensorGroup;
 use data_transfer::rpc::{
     PingEndpoint, SingleFieldValue, StartFieldStream, StopFieldStream, ENDPOINT_LIST,
@@ -18,16 +18,18 @@ use postcard_rpc::{
     define_dispatch,
     server::{
         impls::embedded_io_async_v0_7::{
-            dispatch_impl::{WireRxBuf, WireRxImpl, WireSpawnImpl},
+            dispatch_impl::{WireRxBuf, spawn_fn, WireRxImpl, WireSpawnImpl},
             EioWireTx, WireStorage,
         },
         Server, SpawnContext,
     },
 };
 use embassy_sync::mutex::Mutex;
+use static_cell::StaticCell;
+use crate::N; 
 use {defmt_rtt as _, panic_probe as _};
 
-type SensorGroupDefault =Mutex<CriticalSectionRawMutex, SensorGroup<
+type SensorGroupDefault = Mutex<CriticalSectionRawMutex, SensorGroup<
         I2cDevice<
             'static,
             CriticalSectionRawMutex,
@@ -40,19 +42,19 @@ type SensorGroupDefault =Mutex<CriticalSectionRawMutex, SensorGroup<
         Option<ExtiInput<'static>>,
     >>;
 
-pub struct Context<const N: usize = 1> {
-    pub sensor_groups: [SensorGroupDefault; N],
+pub struct Context {
+    pub sensor_groups: &'static [SensorGroupDefault; N],
 }
 
-pub struct SpawnCtx<const N: usize > {
-    sensor_groups: [&'a mut SensorGroupDefault; N]
+pub struct SpawnCtx {
+    pub sensor_groups: &'static [SensorGroupDefault; N]
 }
 
-impl<const N: usize> SpawnContext for Context<N> {
-    type SpawnCtxt = SpawnCtx<N>;
+impl SpawnContext for Context {
+    type SpawnCtxt = SpawnCtx;
     fn spawn_ctxt(&mut self) -> Self::SpawnCtxt {
         SpawnCtx {
-            sensor_groups: self.sensor_groups.map(Mutex::get_mut)
+            sensor_groups: self.sensor_groups
         }
     }
 }
@@ -104,7 +106,8 @@ define_dispatch! {
         | ----------                | ----      | -------                       |
         | PingEndpoint              | blocking  | ping_handler                  |
         | SingleFieldValue          | async     | single_request_handler        |
-
+        | StartFieldStream          | spawn     | stream_field                  |
+        | StopFieldStream           | blocking  | stop_stream                    |
     };
 
     // Topics IN are messages we receive from the client, but that we do not reply
@@ -124,5 +127,6 @@ define_dispatch! {
     topics_out: {
         // This list comes from our ICD crate.
         list: TOPICS_OUT_LIST;
+        
     };
 }

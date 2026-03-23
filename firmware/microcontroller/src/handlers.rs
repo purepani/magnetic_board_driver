@@ -2,36 +2,85 @@ use crate::app::{Context, SpawnCtx, AppTx};
 use defmt::info;
 use postcard_rpc::header::VarHeader;
 use postcard_rpc::server::Sender;
-use data_transfer::rpc::SensorField;
+use data_transfer::rpc::{SensorField, MagneticTopic, StartFieldStream};
 use embassy_executor;
 use portable_atomic::{AtomicBool, Ordering};
 
+use embassy_futures::join::join_array;
+use embassy_time::{Duration, Ticker};
+use crate::N; 
 pub fn ping_handler(_context: &mut Context, _header: VarHeader, rqst: u32) -> u32 {
     info!("ping");
     rqst
 }
 
+
+pub fn stop_stream(context: &mut Context, _header: VarHeader, rqst: ()) -> () {
+    let was_busy = core::array::from_fn::<_, N, _>(|i| context.sensor_groups[i].try_lock().is_err()).contains(&true);
+    if was_busy {
+        STOP.store(true, Ordering::Release);
+    } else {};
+//    was_busy
+}
+
 pub async fn single_request_handler(context: &mut Context, _header: VarHeader, rqst: (u32, u32)) -> SensorField {
-    
     let board_index = usize::try_from(rqst.0).or(Err(())).unwrap();
     let sensor_index = usize::try_from(rqst.1).or(Err(())).unwrap();
-    let sensor = context.sensor_groups.get_mut(board_index).ok_or(()).unwrap().get_mut();
+    let mut sensor = context.sensor_groups.get(board_index).unwrap().lock().await;
+
     let message = sensor.get_message(sensor_index).await;
     info!("{}", message);
     message.unwrap()
 }
 
-static STOP: AtomicBool = AtomicBool::new(false);
+pub static STOP: AtomicBool = AtomicBool::new(false);
+
+
 
 #[embassy_executor::task]
-async fn stream_field(
-    context: SpawnCtx<1>,
+pub async fn stream_field(
+    context: SpawnCtx,
     header: VarHeader,
     rqst: (),
     sender: Sender<AppTx>,
 ) {
-    
-}
+    let mut seq = 0u8;
+    let mut ticker = Ticker::every(Duration::from_millis(0));
+    if sender
+        .reply::<StartFieldStream>(header.seq_no, &())
+        .await
+        .is_err()
+    {
+        defmt::error!("Failed to reply, stopping accel");
+        return;
+    }
+    while !STOP.load(Ordering::Acquire) {
+        {
 
+            let sensors = core::array::from_fn( |i| context.sensor_groups[i].lock());
+            let mut sensors: [_; N] = join_array(sensors).await;
+
+            for sg in &mut sensors {
+                for i in 0..sg.num_sensors() {
+                    ticker.next().await;
+                    let message = sg.get_message(i).await.unwrap();
+                    info!("{}", message);
+                    if sender
+                        .publish::<MagneticTopic>(seq.into(), &message)
+                        .await
+                        .is_err()
+        {
+            defmt::error!("Send error!");
+            break;
+        }
+                    seq.wrapping_add(1);
+                }
+
+            }
+        }
+    }
+
+    STOP.store(false, Ordering::Release);
+}
 
  

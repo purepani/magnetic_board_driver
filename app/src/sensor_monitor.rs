@@ -1,17 +1,18 @@
 use crate::SerialPortInfo;
 use std::time::Duration;
 
-use data_transfer::{self, messaging::MessageReader, rpc::{SensorField, SingleFieldValue}};
+use data_transfer::{self, messaging::MessageReader, rpc::{MagneticTopic, PingEndpoint, SensorField, SingleFieldValue}};
 
 use postcard_rpc::{
     header::VarSeqKind,
-    host_client::{HostClient, HostErr},
-    standard_icd::{PingEndpoint, WireError, ERROR_PATH},
+    host_client::{HostClient, HostErr, Subscription},
+    standard_icd::{WireError, ERROR_PATH},
 };
+use sipper::{FutureExt, Stream};
 use std::convert::Infallible;
 
+pub struct SensorSubscription(Subscription<SensorField>);
 
-#[derive(Debug)]
 pub struct SensorWatcher {
     client: HostClient<WireError>,
     port_info: SerialPortInfo,
@@ -85,8 +86,32 @@ impl SensorWatcher {
     pub async fn get_single_sensor_field(&self, board: u32, sensor: u32) -> SensorField {
         self.client.send_resp::<SingleFieldValue>(&(board, sensor)).await.unwrap()
     }
+
+    pub async fn subscribe(&mut self) -> Option<Subscription<SensorField>>{
+        self.client.subscribe_exclusive::<MagneticTopic>(64).await.ok()
+    }
+    
 }
 
-impl SensorWatcher {
-    pub fn watcher(&mut self) {}
+impl SensorSubscription {
+
+    pub fn new(subscription: Subscription<SensorField>) -> Self {
+        Self(subscription)
+    }
+    
+    pub async fn recv(&mut self) -> Option<SensorField>{
+        self.0.recv().await
+    }
 }
+
+impl Stream for SensorSubscription {
+    type Item = SensorField;
+
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        let fut = self.get_mut().recv();
+        let value = std::pin::pin!(fut).poll(cx);
+        value
+    }
+    
+}
+

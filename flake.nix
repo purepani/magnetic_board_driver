@@ -21,9 +21,14 @@
 
         # Window system
         wayland
-        # xorg.libX11
-        # xorg.libXcursor
-        # xorg.libXi
+        libdbusmenu
+        kdePackages.xdg-desktop-portal-kde
+        libdisplay-info
+        xorg.libX11
+        xorg.libXcursor
+        xorg.libXi
+        xorg.libxcb
+        zenity
       ];
       target = "thumbv8m.main-none-eabi";
       rust-toolchain = with fenix.packages.${system}; combine [
@@ -49,7 +54,7 @@
             probe-rs-tools
             bacon
             rust-toolchain
-
+            rust-analyzer
           ]; # whatever you need
           #env.RUSTFLAGS = "-C link-arg=-Wl,-rpath,${pkgs.lib.makeLibraryPath dlopenLibraries}";
           shellHook = ''

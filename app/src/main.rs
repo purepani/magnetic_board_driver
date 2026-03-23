@@ -1,23 +1,36 @@
+
+
+use std::ops::Deref;
+use std::path::PathBuf;
 use std::{collections::BTreeMap, time::Duration};
 
 use crossterm::event::{self, Event, KeyCode};
-use postcard_rpc::host_client::HostClient;
+use data_transfer::rpc::{MagneticTopic, StopFieldStream};
+use postcard::experimental::max_size::MaxSize;
+use postcard_rpc::host_client::{HostClient, Subscription};
 use postcard_rpc::standard_icd::WireError;
 use ratatui::{text::Text, widgets::Row, Frame};
 mod sensor_monitor;
+use rfd::FileHandle;
 use sensor_monitor::MagneticData;
+use sipper::Sender;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch::{self, Receiver};
+use std::io::{BufWriter, Write};
+use std::fs::File;
 
-use crate::sensor_monitor::SensorWatcher;
+use crate::sensor_monitor::{SensorSubscription, SensorWatcher};
 use iced::widget::{button, column, combo_box, container, row, text, text_input};
 use iced::{Element, Task};
 use std::fmt::{Display, format};
-
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use data_transfer::{
     self,
     messaging::MessageReader,
-    rpc::{SensorField, SingleFieldValue},
+    rpc::{SensorField, SingleFieldValue, StartFieldStream},
 };
+
 
 #[derive(Debug, Clone)]
 struct SerialPortInfo(serialport::SerialPortInfo);
@@ -28,6 +41,8 @@ impl Display for SerialPortInfo {
     }
 }
 
+
+
 #[derive(Debug, Clone)]
 enum Message {
     PortSelected(SerialPortInfo),
@@ -36,6 +51,14 @@ enum Message {
     UpdatePingSensor(String),
     GetField,
     RecievedField(data_transfer::rpc::SensorField),
+    RecievedStreamField(data_transfer::rpc::SensorField),
+    StartFieldStream,
+    FieldStreamStarted,
+    FieldStreamStopped,
+    StopFieldStream,
+    SelectFile,
+    FileOpened(Result<FileHandle, Error>),
+    WroteFile
 }
 
 #[derive(Debug, Clone, Default)]
@@ -44,12 +67,58 @@ struct PingArgs {
     sensor: String,
 }
 
+
+#[derive(Default)]
+struct SensorGrid {
+    sensor_cols: [[SensorField; 4]; 4]
+}
+
+#[derive(Default)]
+struct SensorGridCollection(BTreeMap<u16, SensorGrid>);
+
+impl SensorGridCollection {
+    fn update_with_field(&mut self, field: &SensorField) {
+        let grid = if let Some(v) = self.0.get_mut(&field.board_id) {
+            v
+        } else {
+            self.0.insert(field.board_id, SensorGrid::default());
+            self.0.get_mut(&field.board_id).unwrap()
+        };
+    }
+}
+
+
 #[derive(Default)]
 struct Context {
     sensor_watcher: Option<SensorWatcher>,
+    file_writer: Option<Arc<Mutex<BufWriter<File>>>>,
     sensors: combo_box::State<SerialPortInfo>,
     ping_args: PingArgs,
     ping_field: Option<SensorField>,
+    sensor_grids: BTreeMap<u8, SensorGrid>
+}
+
+#[derive(Debug, Clone)]
+pub enum Error {
+    DialogClosed,
+    IoError(tokio::io::ErrorKind),
+}
+
+fn open_file(
+    window: &dyn iced::Window,
+) -> impl Future<Output = Result<rfd::FileHandle, Error>> + use<> {
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Open a file...")
+        .set_directory("/")
+        .add_filter("bin", &["bin"])
+        .set_parent(&window);
+
+    async move {
+        let picked_file = dialog.save_file().await.ok_or(Error::DialogClosed);
+        
+        picked_file
+        
+    }
 }
 
 async fn get_single_value(board: u32, sensor: u32, client: HostClient<WireError>) -> SensorField {
@@ -57,7 +126,35 @@ async fn get_single_value(board: u32, sensor: u32, client: HostClient<WireError>
     client.send_resp::<SingleFieldValue>(&args).await.unwrap()
 }
 
+async fn start_field_stream(client: HostClient<WireError>) -> () {
+    client.send_resp::<StartFieldStream>(&()).await.unwrap()
+}
+
+async fn field_subscribe(client: HostClient<WireError>) -> Option<SensorSubscription> {
+    let subs = client.subscribe_exclusive::<MagneticTopic>(64).await.ok()?;
+    Some(SensorSubscription::new(subs))
+}
+
+async fn write_data(writer: &Mutex<BufWriter<File>>, field: &SensorField) {
+    let mut writer = writer.lock().await;
+    let mut data = [0; SensorField::POSTCARD_MAX_SIZE];
+    let val = postcard::to_slice(field, &mut data);
+    println!("{:#?}", val);
+
+    let val = writer.write_all(&mut data);
+    println!("{:#?}", val);
+
+
+
+}
+
+async fn stop_field_stream(client: HostClient<WireError>) -> () {
+    client.send_resp::<StopFieldStream>(&()).await.unwrap()
+}
+
 fn update(context: &mut Context, message: Message) -> Task<Message> {
+
+    println!("{:#?}", message);
     match message {
         Message::PortSelected(serial_port_info) => {
             context.sensor_watcher = Some(SensorWatcher::new(&serial_port_info));
@@ -96,11 +193,98 @@ fn update(context: &mut Context, message: Message) -> Task<Message> {
             } else {
                 Task::none()
             }
+
         }
         Message::RecievedField(sensor_field) => {
             context.ping_field = Some(sensor_field);
             Task::none()
         },
+        Message::RecievedStreamField(sensor_field) => {
+            context.ping_field = Some(sensor_field.clone());
+            match &context.file_writer {
+                Some(w) => {
+                    let wr = w.clone();
+                    Task::perform(
+                        (move || {
+
+                            async move {
+                                println!("Test");
+                                let sensor_field = sensor_field.clone();
+                                let val = write_data(&*wr, &sensor_field).await;
+                            }
+                        } 
+                        )(),
+                        |_| Message::WroteFile
+                    )
+                },
+                None => {
+                    Task::none()
+                },
+            }
+
+        },
+        Message::StartFieldStream => {
+            {
+                if let Some(sw) = &context.sensor_watcher {
+                    let client = sw.get_client();
+                    Task::perform(
+                        start_field_stream(client), 
+                        |()| Message::FieldStreamStarted,
+                    )
+                } else {
+                    Task::none()
+                }                
+            }
+
+        },
+        Message::FieldStreamStarted => {
+            if let Some(sw) = &mut context.sensor_watcher {
+                let mut client = sw.get_client();
+                Task::future(field_subscribe(client)).and_then(|sub| {
+                    Task::run(sub, |f| {
+                        println!("Revieved field: {}", f.field.x.unwrap().value());
+                        Message::RecievedStreamField(f)
+                    })
+                })
+            }  else {
+                Task::none()
+            }
+        }
+        Message::StopFieldStream => {
+                if let Some(sw) = &context.sensor_watcher {
+                    let client = sw.get_client();
+                    Task::perform(
+                        stop_field_stream(client), 
+                        |_| Message::FieldStreamStopped,
+                    )
+                } else {
+                    Task::none()
+                }                
+            
+        }
+        Message::FieldStreamStopped => {
+            Task::none()
+        },
+
+        Message::SelectFile => {
+            iced::window::oldest()
+                .and_then(|id| iced::window::run(id, open_file))
+                .then(Task::future)
+                .map(Message::FileOpened)
+        },
+        Message::FileOpened(fh) => {
+            if let Ok(fh) = fh {
+                let path = fh.path();
+                let file = File::create(path).unwrap();
+                let writer = BufWriter::new(file);
+                let writer = Arc::new(Mutex::new(writer));
+                context.file_writer = Some(writer);
+            }
+            Task::none()
+        },
+        Message::WroteFile => {
+            Task::none()
+        }
     }
 }
 
@@ -124,7 +308,21 @@ fn view(context: &Context) -> Element<'_, Message> {
         text(format!("z: {:.2}", context.ping_field.as_ref().map(|f| f.field.z.map(|z| z.value()).unwrap_or(0.0)).unwrap_or(0.0))),
     ]);
 
-    column![serial_selector, ping_widget].padding(10).into()
+    let stream_widget = container(
+        column![
+            row![button("Start Field Stream").on_press(Message::StartFieldStream)],
+            row![button("Stop Field Stream").on_press(Message::StopFieldStream)],
+            row![
+                text("File output: "),
+                text_input("File", &context.ping_args.sensor),
+                button("Select File").on_press(Message::SelectFile)
+            ]
+        ]
+    );
+
+    
+
+    column![serial_selector, ping_widget, stream_widget].padding(10).into()
 }
 
 #[tokio::main]
