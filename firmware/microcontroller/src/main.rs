@@ -57,7 +57,7 @@ bind_interrupts!(
     }
 );
 
-pub const N: usize = 2;
+pub const N: usize = 3;
 
 type SensorGroupDefault =Mutex<CriticalSectionRawMutex, SensorGroup<
         I2cDevice<
@@ -78,14 +78,14 @@ type SensorGroupDefault =Mutex<CriticalSectionRawMutex, SensorGroup<
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("Hello World!");
-    static I2C_BUSA: StaticCell<
+    static I2C_BUS1: StaticCell<
         Mutex<
             CriticalSectionRawMutex,
             i2c::I2c<'_, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>,
         >,
         > = StaticCell::new();
 
-    static I2C_BUSB: StaticCell<
+    static I2C_BUS3: StaticCell<
         Mutex<
             CriticalSectionRawMutex,
             i2c::I2c<'_, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>,
@@ -178,45 +178,63 @@ async fn main(spawner: Spawner) {
     i2c_config.frequency = khz(100);
     i2c_config.sda_pullup = true;
     i2c_config.scl_pullup = true;
+
+
+    let i2c_bus1 = {
+        let i2c_peri = p.I2C1;
+        
+        let sda = p.PB1;
+        let scl = p.PB2;
+        let rx_gpdma = p.GPDMA1_CH4;
+        let tx_gpdma = p.GPDMA1_CH5;
+
+
+        let i2cport = i2c::I2c::new(
+            i2c_peri,
+            scl,
+            sda,
+            Irqs,
+            rx_gpdma,
+            tx_gpdma,
+            i2c_config,
+        );
+        let i2c_bus = Mutex::new(i2cport);
+        I2C_BUS1.init(i2c_bus)
+    };
+
+    let i2c_bus3 = {
+
+        let i2c_peri = p.I2C3;
+        
+        let sda = p.PA7;
+        let scl = p.PA6;
+        let rx_gpdma = p.GPDMA1_CH0;
+        let tx_gpdma = p.GPDMA1_CH1;
+        
+        let i2cport = i2c::I2c::new(
+            i2c_peri,
+            scl,
+            sda,
+            Irqs,
+            rx_gpdma,
+            tx_gpdma,
+            i2c_config,
+        );
+        let i2c_bus = Mutex::new(i2cport);
+        I2C_BUS3.init(i2c_bus)
+    };
     
     
     let i2c_devices_a = {
-        let sda = p.PB1;
-        let scl = p.PB2;
-
-        let i2cport = i2c::I2c::new(
-            p.I2C1,
-            scl,
-            sda,
-            Irqs,
-            p.GPDMA1_CH4,
-            p.GPDMA1_CH5,
-            i2c_config,
-        );
-        let i2c_bus = Mutex::new(i2cport);
-        let i2c_bus = I2C_BUSA.init(i2c_bus);
-
-        core::array::from_fn(|_| I2cDevice::new(i2c_bus))
+        core::array::from_fn(|_| I2cDevice::new(i2c_bus1))
     };
 
     let i2c_devices_b = {
-        let sda = p.PA7;
-        let scl = p.PA6;
+        core::array::from_fn(|_| I2cDevice::new(i2c_bus3))
+    };
 
-
-        let i2cport = i2c::I2c::new(
-            p.I2C3,
-            scl,
-            sda,
-            Irqs,
-            p.GPDMA1_CH0,
-            p.GPDMA1_CH1,
-            i2c_config,
-        );
-        let i2c_bus = Mutex::new(i2cport);
-        let i2c_bus = I2C_BUSB.init(i2c_bus);
-
-        core::array::from_fn(|_| I2cDevice::new(i2c_bus))
+    let i2c_devices_c = {
+        core::array::from_fn(|_| I2cDevice::new(i2c_bus3))
     };
 
     let sensor_grid_side_length = 13.5;
@@ -228,10 +246,12 @@ async fn main(spawner: Spawner) {
     
     let sensor_groups = {
         let sensor_builders_a: [_; 16] = core::array::from_fn(|i| SensorBuilder::new_stm(0x0C+(i as u8), positions[i]));
-        let sensor_builders_b: [_; 16] = core::array::from_fn(|i| SensorBuilder::new_stm(0x0C+(i as u8), positions[i]));
+        let sensor_builders_b: [_; 16] = core::array::from_fn(|i| SensorBuilder::new_stm((0x0C+(i as u8)), positions[i]));
+        let sensor_builders_c: [_; 16] = core::array::from_fn(|i| SensorBuilder::new_stm((0x0C+(i as u8)) ^ 0b01000000, positions[i]));
         let mut sensor_group_builder_a = SensorGroupBuilder::new_stm(0, sensor_builders_a);
         let mut sensor_group_builder_b = SensorGroupBuilder::new_stm(1, sensor_builders_b);
-        let mut sensor_groups = [sensor_group_builder_a.with_i2c(i2c_devices_a).await, sensor_group_builder_b.with_i2c(i2c_devices_b).await];
+        let mut sensor_group_builder_c = SensorGroupBuilder::new_stm(2, sensor_builders_c);
+        let mut sensor_groups = [sensor_group_builder_a.with_i2c(i2c_devices_a).await, sensor_group_builder_b.with_i2c(i2c_devices_b).await, sensor_group_builder_c.with_i2c(i2c_devices_c).await];
         let sensor_groups = sensor_groups.map(Mutex::new);
         let sensor_groups = SENSOR_GROUPS.init(sensor_groups);
         sensor_groups
