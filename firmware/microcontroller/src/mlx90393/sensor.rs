@@ -8,10 +8,9 @@ use bitflags::bitflags;
 use data_transfer::conversions::MagneticField;
 use data_transfer::memory::{Gain, HallConf, Res3D, TemperatureCompensation};
 //use bitvec::prelude::*;
-use defmt::{debug, info, Format};
+use defmt::{info, Format};
 //use embassy_stm32::i2c::Error;
 use embassy_time::Timer;
-use embedded_hal::i2c::Operation;
 //use embedded_hal::digital::v2::InputPin;
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::i2c::I2c;
@@ -102,7 +101,7 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
 
         //let transaction = self.i2c.transaction(self.address, &mut operations).await;
 
-        let transaction = self
+        let _transaction = self
             .i2c
             .write_read(self.address, &commands, &mut buffer)
             .await;
@@ -150,7 +149,7 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
 
     pub async fn read_register<const R: u8>(&mut self) -> Register<R> {
         let command = Command::read_register(R);
-        let (status, data) = self.run_command(command).await;
+        let (_status, data) = self.run_command(command).await;
         let [_, data1, data2] = data;
         let d = [data1, data2];
         Register::<R>::new(d)
@@ -203,7 +202,7 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
         &mut self,
     ) {
         info!("Settings Mode to Burst.");
-        let (status, buffer) = self
+        let (status, _buffer) = self
             .run_command(Command::start_burst::<X, Y, Z, TEMP>())
             .await;
         info!("{:#?}", status);
@@ -419,7 +418,7 @@ impl<I: I2c, P: Wait> MLX90393<I, Option<P>> {
                 }
             }
         };
-        return (status, mbits);
+        (status, mbits)
         //Timer::after_micros(15).await;
         //info!("{}", status);
     }

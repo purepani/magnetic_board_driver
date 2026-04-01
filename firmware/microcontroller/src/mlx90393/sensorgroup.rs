@@ -4,7 +4,6 @@ use data_transfer::{
     rpc,
 };
 use defmt::Format;
-use defmt::{debug, info};
 use embassy_futures::join::join_array;
 use embassy_stm32::exti::ExtiInput;
 use embassy_time::{Instant, Timer};
@@ -74,7 +73,7 @@ where {
             .set_single_measurmenet::<true, true, true, true>()
             .await;
         Timer::after_millis(50).await;
-        let (status, field) = self.mlx.get_field::<true, true, true, true>().await;
+        let (_status, field) = self.mlx.get_field::<true, true, true, true>().await;
         //debug!("{:#?}", status);
         //if status.is_some_and(|val| !val.burst_mode) {
         //self.mlx.set_burst::<true, true, true, true>().await;
@@ -131,7 +130,7 @@ pub struct SensorGroup<I, P, const N: usize = 16> {
 
 impl<I: I2c, P: Wait, const N: usize> SensorGroup<I, Option<P>, N> {
     pub async fn get_message(&mut self, index: usize) -> Result<rpc::SensorField, ()> {
-        let mut sensor = self.sensors.get_mut(index).ok_or(())?;
+        let sensor = self.sensors.get_mut(index).ok_or(())?;
         let message = sensor.get_message().await?;
         Ok(rpc::SensorField {
             address: message.address,

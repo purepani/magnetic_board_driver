@@ -12,16 +12,11 @@ use postcard_rpc::server::{Server, Dispatch};
 
 
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
-use embassy_futures::join::join_array;
 use embassy_sync::{
-    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, RawMutex, ThreadModeRawMutex},
+    blocking_mutex::raw::CriticalSectionRawMutex,
     mutex::Mutex,
-    signal::Signal,
     watch::Watch,
 };
-use embedded_io::Write;
-use futures::join;
-use heapless::{self};
 
 use defmt::{debug, info};
 use embassy_executor::Spawner;
@@ -35,10 +30,9 @@ use embassy_stm32::{
 };
 
 use embassy_stm32::rcc::{PllDiv, PllMul, PllPreDiv, PllSource};
-use embassy_time::{Duration, Timer};
+use embassy_time::Duration;
 
 use embassy_stm32::usart;
-use embedded_hal_async::i2c::I2c;
 use mlx90393::sensorgroup::{SensorGroupBuilder, SensorBuilder};
 
 use static_cell::{ConstStaticCell};
@@ -167,7 +161,7 @@ async fn main(spawner: Spawner) {
     )
         .unwrap();
     let (uart_tx, uart_rx) = uart_interface.split();
-    let mut rx_buffer = [0u8; 256];
+    let rx_buffer = [0u8; 256];
     let rx_buffer = UART_RX_BUFFER.init(Mutex::new(rx_buffer));
     let uart_rx = uart_rx.into_ring_buffered(rx_buffer.get_mut());
     
@@ -246,15 +240,15 @@ async fn main(spawner: Spawner) {
     
     let sensor_groups = {
         let sensor_builders_a: [_; 16] = core::array::from_fn(|i| SensorBuilder::new_stm(0x0C+(i as u8), positions[i]));
-        let sensor_builders_b: [_; 16] = core::array::from_fn(|i| SensorBuilder::new_stm((0x0C+(i as u8)), positions[i]));
+        let sensor_builders_b: [_; 16] = core::array::from_fn(|i| SensorBuilder::new_stm(0x0C+(i as u8), positions[i]));
         let sensor_builders_c: [_; 16] = core::array::from_fn(|i| SensorBuilder::new_stm((0x0C+(i as u8)) ^ 0b01000000, positions[i]));
         let mut sensor_group_builder_a = SensorGroupBuilder::new_stm(0, sensor_builders_a);
         let mut sensor_group_builder_b = SensorGroupBuilder::new_stm(1, sensor_builders_b);
         let mut sensor_group_builder_c = SensorGroupBuilder::new_stm(2, sensor_builders_c);
-        let mut sensor_groups = [sensor_group_builder_a.with_i2c(i2c_devices_a).await, sensor_group_builder_b.with_i2c(i2c_devices_b).await, sensor_group_builder_c.with_i2c(i2c_devices_c).await];
+        let sensor_groups = [sensor_group_builder_a.with_i2c(i2c_devices_a).await, sensor_group_builder_b.with_i2c(i2c_devices_b).await, sensor_group_builder_c.with_i2c(i2c_devices_c).await];
         let sensor_groups = sensor_groups.map(Mutex::new);
-        let sensor_groups = SENSOR_GROUPS.init(sensor_groups);
-        sensor_groups
+        
+        SENSOR_GROUPS.init(sensor_groups)
     };
 
     
@@ -272,7 +266,7 @@ async fn main(spawner: Spawner) {
     static PACKET_RX_BUF: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0u8; 256]);
     
     
-    let context = Context { sensor_groups: sensor_groups };
+    let context = Context { sensor_groups };
 
     let dispatcher = MyApp::new(context, spawner.into());
     let vkk = dispatcher.min_key_len();

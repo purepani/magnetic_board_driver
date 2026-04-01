@@ -7,13 +7,9 @@ use data_transfer::rpc::{
     PingEndpoint, SingleFieldValue, StartFieldStream, StopFieldStream, ENDPOINT_LIST,
     TOPICS_IN_LIST, TOPICS_OUT_LIST,
 };
-use defmt::info;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_stm32::exti::ExtiInput;
-use embassy_sync::blocking_mutex::raw::{
-    CriticalSectionRawMutex, NoopRawMutex, RawMutex, ThreadModeRawMutex,
-};
-use embedded_hal_async::{digital::Wait, i2c::I2c};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use postcard_rpc::{
     define_dispatch,
     server::{
@@ -25,7 +21,6 @@ use postcard_rpc::{
     },
 };
 use embassy_sync::mutex::Mutex;
-use static_cell::StaticCell;
 use crate::N; 
 use {defmt_rtt as _, panic_probe as _};
 

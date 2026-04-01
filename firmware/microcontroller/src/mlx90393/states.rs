@@ -46,7 +46,7 @@ pub struct Measuring;
 pub struct Measured;
 
 impl<T: IsMode> From<SensorState<Idle, NoMode>> for SensorState<Measuring, T> {
-    fn from(value: SensorState<Idle, NoMode>) -> Self {
+    fn from(_value: SensorState<Idle, NoMode>) -> Self {
         Self {
             state: Measuring,
             mode: T::new(),
@@ -64,7 +64,7 @@ impl<T> From<SensorState<Measuring, T>> for SensorState<Measured, T> {
 }
 
 impl<T> From<SensorState<Measured, T>> for SensorState<Idle, NoMode> {
-    fn from(value: SensorState<Measured, T>) -> Self {
+    fn from(_value: SensorState<Measured, T>) -> Self {
         Self {
             state: Idle,
             mode: NoMode,
@@ -73,7 +73,7 @@ impl<T> From<SensorState<Measured, T>> for SensorState<Idle, NoMode> {
 }
 
 impl From<SensorState<Measured, Burst>> for SensorState<Measuring, Burst> {
-    fn from(value: SensorState<Measured, Burst>) -> Self {
+    fn from(_value: SensorState<Measured, Burst>) -> Self {
         Self {
             state: Measuring,
             mode: Burst,
@@ -82,7 +82,7 @@ impl From<SensorState<Measured, Burst>> for SensorState<Measuring, Burst> {
 }
 
 impl From<SensorState<Measured, WakeOnChange>> for SensorState<Measuring, WakeOnChange> {
-    fn from(value: SensorState<Measured, WakeOnChange>) -> Self {
+    fn from(_value: SensorState<Measured, WakeOnChange>) -> Self {
         Self {
             state: Measuring,
             mode: WakeOnChange,
@@ -91,7 +91,7 @@ impl From<SensorState<Measured, WakeOnChange>> for SensorState<Measuring, WakeOn
 }
 
 impl<T> From<SensorState<Measured, T>> for SensorState<Measuring, SingleMeasurement> {
-    fn from(value: SensorState<Measured, T>) -> Self {
+    fn from(_value: SensorState<Measured, T>) -> Self {
         Self {
             state: Measuring,
             mode: SingleMeasurement,

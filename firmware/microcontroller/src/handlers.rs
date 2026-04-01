@@ -15,11 +15,11 @@ pub fn ping_handler(_context: &mut Context, _header: VarHeader, rqst: u32) -> u3
 }
 
 
-pub fn stop_stream(context: &mut Context, _header: VarHeader, rqst: ()) -> () {
+pub fn stop_stream(context: &mut Context, _header: VarHeader, _rqst: ()) {
     let was_busy = core::array::from_fn::<_, N, _>(|i| context.sensor_groups[i].try_lock().is_err()).contains(&true);
     if was_busy {
         STOP.store(true, Ordering::Release);
-    } else {};
+    } ;
 //    was_busy
 }
 
@@ -41,10 +41,10 @@ pub static STOP: AtomicBool = AtomicBool::new(false);
 pub async fn stream_field(
     context: SpawnCtx,
     header: VarHeader,
-    rqst: (),
+    _rqst: (),
     sender: Sender<AppTx>,
 ) {
-    let mut seq = 0u8;
+    let seq = 0u8;
     let mut ticker = Ticker::every(Duration::from_millis(0));
     if sender
         .reply::<StartFieldStream>(header.seq_no, &())
