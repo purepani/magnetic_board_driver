@@ -1,45 +1,53 @@
 use bitflags::{bitflags, Flags};
 use bitmatch::bitmatch;
+use zerocopy::{ KnownLayout, Immutable, Unaligned};
 
 
 
-pub struct Register<const R: u8> {
-    data: [u8; 2],
+
+
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, KnownLayout, Immutable)]
+#[repr(u16)]
+pub enum ZSeries {
+    Disabled=0b00000000,
+    Enabled=0b10000000,
 }
 
-impl<const R: u8> Register<R> {
-    pub fn new(data: [u8; 2]) -> Self {
-        Self { data }
-    }
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, KnownLayout, Immutable)]
+#[repr(u16)]
+pub enum Gain {
+    ZERO=0 << 4,
+    ONE=1 << 4,
+    TWO=2 << 4,
+    THREE=3 << 4,
+    FOUR=4 << 4,
+    FIVE=5 << 4,
+    SIX=6 << 4,
+    SEVEN=7 << 4,
 }
 
-impl Register<0x00> {
-    fn flags(&self) -> RegisterOneFlags {
-        RegisterOneFlags::from_bits_retain(u16::from_be_bytes(self.data))
-    }
-
-    pub fn zseries(&self) -> ZSeries {
-        match self.flags().contains(RegisterOneFlags::ZSeries) {
-            true => ZSeries::Enabled,
-            false => ZSeries::Disabled,
-        }
-    }
-
-    pub fn bist(&self) -> Bist {
-        match self.flags().contains(RegisterOneFlags::Bist) {
-            true => Bist::Enabled,
-            false => Bist::Disabled,
-        }
-    }
-
-    pub fn hall_conf(&self) -> Option<HallConf> {
-        HallConf::from_u8_slice(&self.data)
-    }
-
-    pub fn gain(&self) -> Gain {
-        Gain::from_u8_slice(&self.data)
-    }
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, KnownLayout, Immutable)]
+#[repr(u16)]
+pub enum HallConf {
+    TWOPHASE=0b0000,
+    FOURPHASE=0b1100,
 }
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, KnownLayout, Immutable)]
+#[repr(u16)]
+pub enum Bist {
+    Disabled=0b0_00000000,
+    Enabled=0b1_00000000,
+}
+
+
+
+
+
+
 
 pub struct BurstSel {
     pub x: bool,
@@ -48,121 +56,17 @@ pub struct BurstSel {
     pub temp: bool,
 }
 
-impl Register<0x01> {
-    fn flags(&self) -> RegisterTwoFlags {
-        RegisterTwoFlags::from_bits_retain(u16::from_be_bytes(self.data))
-    }
-
-    pub fn burst_sel(&self) -> BurstSel {
-        let x = self.flags().contains(RegisterTwoFlags::BurstSelX);
-        let y = self.flags().contains(RegisterTwoFlags::BurstSelY);
-        let z = self.flags().contains(RegisterTwoFlags::BurstSelZ);
-        let temp = self.flags().contains(RegisterTwoFlags::BurstSelT);
-        BurstSel { x, y, z, temp }
-    }
-
-    pub fn temperature_compensation(&self) -> TemperatureCompensation {
-        match self.flags().contains(RegisterTwoFlags::TcmpEn) {
-            true => TemperatureCompensation::Enabled,
-            false => TemperatureCompensation::Disabled,
-        }
-    }
-
-    pub fn external_trigger(&self) -> bool {
-        self.flags().contains(RegisterTwoFlags::ExtTrig)
-    }
-
-    pub fn wake_on_change_diff(&self) -> bool {
-        self.flags().contains(RegisterTwoFlags::WOCDiff)
-    }
-
-    pub fn trigger_interrupt(&self) -> bool {
-        self.flags().contains(RegisterTwoFlags::TrigInt)
-    }
-}
-
-impl Register<0x02> {
-    pub fn resolution(&self) -> Res3D {
-        Res3D::from_u8_slice(&self.data)
-    }
-
-    pub fn magnetic_axis_conversion_time_micro(&self) -> u64 {
-        let osr = self.data[0] & 0b0000_0011;
-        let dig_filt = (self.data[0] & 0b0001_1100) >> 2;
-        67 + 64 * (1 << osr) * (2 + (1 << dig_filt))
-    }
-
-    pub fn temperature_conversion_time_micro(&self) -> u64 {
-        let osr2 = (self.data[1] & 0b0001_1000) >> 3;
-        67 + 192 * (1 << osr2)
-    }
-}
-
-impl Register<0x03> {
-    pub fn temperature_offset(&self) -> TempOffset {
-        TempOffset::from_u8_slice(&self.data)
-    }
-}
-
-impl Register<0x24> {
-    pub fn temperature_reference(&self) -> TempRef {
-        TempRef::from_u8_slice(&self.data)
-    }
-}
-
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
 #[derive(Clone, Copy)]
 pub struct TempOffset {
     pub offset: [u8; 2],
 }
-impl TempOffset {
-    pub fn from_u8_slice(offset: &[u8; 2]) -> Self {
-        Self { offset: *offset }
-    }
-}
+
 
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
 #[derive(Clone, Copy)]
 pub struct TempRef {
     pub offset: [u8; 2],
-}
-impl TempRef {
-    pub fn from_u8_slice(offset: &[u8; 2]) -> Self {
-        Self { offset: *offset }
-    }
-}
-#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
-#[derive(Clone, Copy)]
-#[repr(usize)]
-pub enum ZSeries {
-    Disabled,
-    Enabled,
-}
-#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
-#[derive(Clone, Copy)]
-#[repr(usize)]
-pub enum Bist {
-    Disabled,
-    Enabled,
-}
-bitflags! {
-    pub struct RegisterOneFlags: u16 {
-        const ZSeries = 0b0000_0000_1000_0000;
-        const Bist = 0b0000_0001_0000_0000;
-    }
-}
-
-bitflags! {
-    pub struct RegisterTwoFlags: u16 {
-        const TrigInt = 0b1000_0000_0000_0000;
-        const WOCDiff = 0b0001_0000_0000_0000;
-        const ExtTrig = 0b0000_1000_0000_0000;
-        const TcmpEn = 0b0000_0100_0000_0000;
-        const BurstSelZ = 0b0000_0010_0000_0000;
-        const BurstSelY = 0b0000_0001_0000_0000;
-        const BurstSelX = 0b0000_0000_1000_0000;
-        const BurstSelT = 0b0000_0000_0100_0000;
-    }
 }
 
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
@@ -186,35 +90,6 @@ impl TemperatureCompensation {
     }
 }
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
-#[derive(Clone, Copy)]
-#[repr(usize)]
-pub enum Gain {
-    ZERO,
-    ONE,
-    TWO,
-    THREE,
-    FOUR,
-    FIVE,
-    SIX,
-    SEVEN,
-}
-impl Gain {
-    #[bitmatch]
-    pub fn from_u8_slice(val: &[u8; 2]) -> Self {
-        #[bitmatch]
-        match val[1] {
-            "?000_????" => Self::ZERO,
-            "?001_????" => Self::ONE,
-            "?010_????" => Self::TWO,
-            "?011_????" => Self::THREE,
-            "?100_????" => Self::FOUR,
-            "?101_????" => Self::FIVE,
-            "?110_????" => Self::SIX,
-            "?111_????" => Self::SEVEN,
-        }
-    }
-}
-#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, )]
 #[repr(usize)]
 pub enum Resolution {
@@ -223,246 +98,11 @@ pub enum Resolution {
     BIT17,
     BIT16,
 }
-#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, )]
-#[repr(usize)]
-pub enum HallConf {
-    TWOPHASE,
-    FOURPHASE,
-}
 
-impl HallConf {
-    #[bitmatch]
-    pub fn from_u8_slice(val: &[u8; 2]) -> Option<Self> {
-        #[bitmatch]
-        match val[1] {
-            "????_0000" => Some(Self::TWOPHASE),
-            "????_1100" => Some(Self::FOURPHASE),
-            _ => None,
-        }
-    }
-}
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
 #[derive(Clone, Copy)]
 pub struct Res3D {
     pub x: Resolution,
     pub y: Resolution,
     pub z: Resolution,
-}
-
-impl Res3D {
-    #[bitmatch]
-    pub fn from_u8_slice(val: &[u8; 2]) -> Self {
-        #[bitmatch]
-        let "yxx?_????" = val[1];
-        #[bitmatch]
-        let "????_??zzv" = val[0];
-        let xval = #[bitmatch]
-        match x {
-            "00" => Resolution::BIT19,
-            "01" => Resolution::BIT18,
-            "10" => Resolution::BIT17,
-            "11" => Resolution::BIT16,
-        };
-        let yval = #[bitmatch]
-        match v {
-            "0" =>
-            {
-                #[bitmatch]
-                match y {
-                    "0" => Resolution::BIT19,
-                    "1" => Resolution::BIT18,
-                }
-            }
-            "1" =>
-            {
-                #[bitmatch]
-                match y {
-                    "0" => Resolution::BIT17,
-                    "1" => Resolution::BIT16,
-                }
-            }
-        };
-        let zval = #[bitmatch]
-        match z {
-            "00" => Resolution::BIT19,
-            "01" => Resolution::BIT18,
-            "10" => Resolution::BIT17,
-            "11" => Resolution::BIT16,
-        };
-
-        Self {
-            x: xval,
-            y: yval,
-            z: zval,
-        }
-    }
-}
-
-#[repr(u32)]
-pub enum CustomerMemoryArea {
-    Hallconf,
-    GainSel,
-    ZSeries,
-    Bist,
-    AnaReservedLow,
-    BurstDataRate,
-    BurstSel,
-    TcmpEn,
-    ExtTrg,
-    WocDiff,
-    CommMode,
-    TrigInt,
-    OSR,
-    DigFilt,
-    ResX,
-    ResY,
-    ResZ,
-
-    OSR2,
-    SensTcLT,
-    SensTcHT,
-    OffsetX,
-    OffsetY,
-    OffsetZ,
-    WOxyThreshold,
-    WOzThreshold,
-}
-
-struct MemoryLocation {
-    register: u8,
-    position: usize,
-    length: usize,
-}
-
-impl CustomerMemoryArea {
-    fn to_memory_location(&self) -> MemoryLocation {
-        match self {
-            CustomerMemoryArea::Hallconf => MemoryLocation {
-                register: 0x00,
-                position: 0,
-                length: 4,
-            },
-            CustomerMemoryArea::GainSel => MemoryLocation {
-                register: 0x00,
-                position: 4,
-                length: 3,
-            },
-            CustomerMemoryArea::ZSeries => MemoryLocation {
-                register: 0x00,
-                position: 7,
-                length: 1,
-            },
-            CustomerMemoryArea::Bist => MemoryLocation {
-                register: 0x00,
-                position: 8,
-                length: 1,
-            },
-            CustomerMemoryArea::AnaReservedLow => MemoryLocation {
-                register: 0x00,
-                position: 9,
-                length: 7,
-            },
-            CustomerMemoryArea::BurstDataRate => MemoryLocation {
-                register: 0x01,
-                position: 0,
-                length: 6,
-            },
-            CustomerMemoryArea::BurstSel => MemoryLocation {
-                register: 0x01,
-                position: 6,
-                length: 4,
-            },
-            CustomerMemoryArea::TcmpEn => MemoryLocation {
-                register: 0x01,
-                position: 10,
-                length: 1,
-            },
-            CustomerMemoryArea::ExtTrg => MemoryLocation {
-                register: 0x01,
-                position: 11,
-                length: 1,
-            },
-            CustomerMemoryArea::WocDiff => MemoryLocation {
-                register: 0x01,
-                position: 12,
-                length: 1,
-            },
-            CustomerMemoryArea::CommMode => MemoryLocation {
-                register: 0x01,
-                position: 13,
-                length: 2,
-            },
-            CustomerMemoryArea::TrigInt => MemoryLocation {
-                register: 0x01,
-                position: 15,
-                length: 1,
-            },
-            CustomerMemoryArea::OSR => MemoryLocation {
-                register: 0x02,
-                position: 0,
-                length: 2,
-            },
-            CustomerMemoryArea::DigFilt => MemoryLocation {
-                register: 0x02,
-                position: 2,
-                length: 3,
-            },
-            CustomerMemoryArea::ResX => MemoryLocation {
-                register: 0x02,
-                position: 5,
-                length: 2,
-            },
-            CustomerMemoryArea::ResY => MemoryLocation {
-                register: 0x02,
-                position: 7,
-                length: 2,
-            },
-            CustomerMemoryArea::ResZ => MemoryLocation {
-                register: 0x02,
-                position: 9,
-                length: 2,
-            },
-            CustomerMemoryArea::OSR2 => MemoryLocation {
-                register: 0x02,
-                position: 11,
-                length: 2,
-            },
-            CustomerMemoryArea::SensTcLT => MemoryLocation {
-                register: 0x03,
-                position: 0,
-                length: 8,
-            },
-            CustomerMemoryArea::SensTcHT => MemoryLocation {
-                register: 0x03,
-                position: 8,
-                length: 8,
-            },
-            CustomerMemoryArea::OffsetX => MemoryLocation {
-                register: 0x04,
-                position: 0,
-                length: 16,
-            },
-            CustomerMemoryArea::OffsetY => MemoryLocation {
-                register: 0x05,
-                position: 0,
-                length: 16,
-            },
-            CustomerMemoryArea::OffsetZ => MemoryLocation {
-                register: 0x06,
-                position: 0,
-                length: 16,
-            },
-            CustomerMemoryArea::WOxyThreshold => MemoryLocation {
-                register: 0x07,
-                position: 0,
-                length: 16,
-            },
-            CustomerMemoryArea::WOzThreshold => MemoryLocation {
-                register: 0x08,
-                position: 0,
-                length: 16,
-            },
-        }
-    }
 }
