@@ -143,9 +143,6 @@ async fn write_data(writer: &Mutex<BufWriter<File>>, field: &SensorField) {
 
     let val = writer.write_all(&mut data);
     println!("{:#?}", val);
-
-
-
 }
 
 async fn stop_field_stream(client: HostClient<WireError>) -> () {

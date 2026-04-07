@@ -55,6 +55,7 @@
             bacon
             rust-toolchain
             rust-analyzer
+            uv
           ]; # whatever you need
           #env.RUSTFLAGS = "-C link-arg=-Wl,-rpath,${pkgs.lib.makeLibraryPath dlopenLibraries}";
           shellHook = ''

@@ -1,4 +1,6 @@
+#[cfg(feature = "use-defmt")]
 use defmt::write;
+
 use postcard::experimental::max_size::MaxSize;
 
 use serde::{Deserialize, Serialize};
@@ -11,7 +13,8 @@ extern crate alloc;
 #[cfg(feature = "use-std")]
 extern crate std;
 
-#[derive(Debug, defmt::Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Debug)]
 pub enum Error {
     FailedCRCSerialization,
     FailedCOBSSerialization,
@@ -26,6 +29,7 @@ pub enum Error {
 #[derive(Debug)]
 pub struct PostcardError(postcard::Error);
 
+#[cfg(feature = "use-defmt")]
 impl defmt::Format for PostcardError {
     fn format(&self, fmt: defmt::Formatter) {
         let Self(err) = self;
@@ -71,8 +75,8 @@ impl From<postcard::Error> for Error {
         Self::FailedParse(PostcardError(value))
     }
 }
-
-#[derive(Debug, Serialize, Deserialize, defmt::Format, MaxSize)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Debug, Serialize, Deserialize,  MaxSize)]
 pub struct Message {
     pub field: MagneticField,
     pub position: (f32, f32, f32),

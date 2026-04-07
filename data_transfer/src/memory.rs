@@ -1,6 +1,7 @@
 use bitflags::{bitflags, Flags};
 use bitmatch::bitmatch;
-use defmt::Format;
+
+
 
 pub struct Register<const R: u8> {
     data: [u8; 2],
@@ -109,7 +110,8 @@ impl Register<0x24> {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy)]
 pub struct TempOffset {
     pub offset: [u8; 2],
 }
@@ -119,7 +121,8 @@ impl TempOffset {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy)]
 pub struct TempRef {
     pub offset: [u8; 2],
 }
@@ -128,15 +131,15 @@ impl TempRef {
         Self { offset: *offset }
     }
 }
-
-#[derive(Clone, Copy, Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy)]
 #[repr(usize)]
 pub enum ZSeries {
     Disabled,
     Enabled,
 }
-
-#[derive(Clone, Copy, Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy)]
 #[repr(usize)]
 pub enum Bist {
     Disabled,
@@ -162,7 +165,8 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy)]
 #[repr(usize)]
 pub enum TemperatureCompensation {
     Disabled,
@@ -181,8 +185,8 @@ impl TemperatureCompensation {
         }
     }
 }
-
-#[derive(Clone, Copy, Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy)]
 #[repr(usize)]
 pub enum Gain {
     ZERO,
@@ -210,8 +214,8 @@ impl Gain {
         }
     }
 }
-
-#[derive(Clone, Copy, Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, )]
 #[repr(usize)]
 pub enum Resolution {
     BIT19,
@@ -219,8 +223,8 @@ pub enum Resolution {
     BIT17,
     BIT16,
 }
-
-#[derive(Clone, Copy, Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, )]
 #[repr(usize)]
 pub enum HallConf {
     TWOPHASE,
@@ -238,8 +242,8 @@ impl HallConf {
         }
     }
 }
-
-#[derive(Clone, Copy, Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy)]
 pub struct Res3D {
     pub x: Resolution,
     pub y: Resolution,

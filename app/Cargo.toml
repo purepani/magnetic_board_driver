@@ -31,5 +31,4 @@ async-std = "1.13.2"
 
 
 
-[profile.release]
-debug = 2
+

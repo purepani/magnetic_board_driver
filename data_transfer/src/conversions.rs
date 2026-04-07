@@ -1,4 +1,3 @@
-use defmt::Format;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use postcard_schema::Schema;
@@ -26,7 +25,8 @@ impl MagneticBits {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Clone, Copy)]
 #[repr(usize)]
 pub enum Axis {
     X,
@@ -102,8 +102,8 @@ impl SensitivityPerBit {
         }
     }
 }
-
-#[derive(Serialize, Deserialize, Schema, Clone, Copy, Format, Debug, MaxSize, PartialEq)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Serialize, Deserialize, Schema, Clone, Copy,  Debug, MaxSize, PartialEq)]
 pub enum TempValue {
     Celsius(f64),
 }
@@ -128,8 +128,8 @@ impl TempValue {
         }
     }
 }
-
-#[derive(Serialize, Deserialize, PartialEq, Schema, Clone, Copy, Format, Debug, Default, MaxSize)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Serialize, Deserialize, PartialEq, Schema, Clone, Copy,  Debug, Default, MaxSize)]
 pub struct MagneticField {
     pub x: Option<MagneticValue>,
     pub y: Option<MagneticValue>,
@@ -189,8 +189,8 @@ pub enum Error {
     FailedCOBSSerialization,
     FailedWrite,
 }
-
-#[derive(Serialize, Deserialize, Schema, PartialEq, Clone, Copy, Format, Debug, MaxSize)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Serialize, Deserialize, Schema, PartialEq, Clone, Copy,  Debug, MaxSize)]
 #[repr(usize)]
 pub enum MagneticValue {
     uT(f64),

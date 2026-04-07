@@ -4,11 +4,10 @@ use postcard_rpc::{endpoints, topics, TopicDirection};
 use postcard_schema::Schema;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
-use defmt::Format;
 use crate::conversions::MagneticField;
 
-
-#[derive(Debug, Clone, Default, Format, Serialize, Deserialize, Schema, PartialEq, MaxSize)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Schema, PartialEq, MaxSize)]
 pub struct SensorField {
     pub field: MagneticField,
     pub board_id: u16,
