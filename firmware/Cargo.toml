@@ -39,4 +39,4 @@ resolver="2"
 
 
 [patch.crates-io]
-postcard-rpc = { git = 'https://github.com/tweedegolf/postcard-rpc.git', branch = "eio_0_7"}
+postcard-rpc = { git = 'https://github.com/jamesmunns/postcard-rpc.git', branch = "main"}
