@@ -149,9 +149,9 @@ impl MagneticField {
         resolution: Res3D,
         hallconf: HallConf,
     ) -> Option<Self> {
-        let x_field = MagneticValue::from_bits(x, temp_comp, gain, resolution.x, hallconf, Axis::X);
-        let y_field = MagneticValue::from_bits(y, temp_comp, gain, resolution.y, hallconf, Axis::Y);
-        let z_field = MagneticValue::from_bits(z, temp_comp, gain, resolution.z, hallconf, Axis::Z);
+        let x_field = MagneticValue::from_bits(x, temp_comp, gain, resolution.x(), hallconf, Axis::X);
+        let y_field = MagneticValue::from_bits(y, temp_comp, gain, resolution.y(), hallconf, Axis::Y);
+        let z_field = MagneticValue::from_bits(z, temp_comp, gain, resolution.z(), hallconf, Axis::Z);
         let temp = TempValue::from_option_bits(temp, temp_offset);
         Some(Self {
             x: x_field,
